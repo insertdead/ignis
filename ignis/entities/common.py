@@ -1,8 +1,8 @@
 """Common code between all entities"""
 from aiohttp import ClientSession, ClientResponse
 from urllib.parse import urljoin
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, field
+from async_lru import alru_cache
 
 HOST = "https://api.flair.co"
 
@@ -50,6 +50,7 @@ class Entity:
     def __init__(self, token):
         self.token = token
         self.entity_type = None
+        self.entity_list: list[EntityStore] = []
         self.opts = {
             "Accept": "application/vnd.api+json",
             "Content-Type": "application/json",
@@ -61,7 +62,8 @@ class Entity:
         url = await u.create_url(f"/api/{self.entity_type}")
         async with ClientSession as session:
             async with session.get(url, params=self.opts) as resp:
-                self.entity = await resp.json()
+                json = await resp.json()
+                self.entity = json
                 return await resp.status
 
     async def get(self, entity_id):
@@ -74,6 +76,17 @@ class Entity:
                 self.entity_response = json
                 return await resp.status
 
+    async def update_entity(self, func):
+        """Wrapper to update list of entities"""
+        # How to make code entity independent and add entity specific code in
+        # subclasses? Maybe turn this into a wrapper?
+        async def update(self):
+            status = await self.get_list()
+            func(self.entity)
+            return status
+
+        return update
+
     async def control(self, entity_id, body):
         """POST request to API to change entity properties"""
         u = Util()
@@ -83,7 +96,7 @@ class Entity:
             async with session.patch(url, data=__body, params=self.opts) as resp:
                 return await resp.status
 
-    @lru_cache
+    @alru_cache
     async def id_from_name(self, name):
         """Get entity ID from its name"""
         await self.get_list()
@@ -98,20 +111,13 @@ class Entity:
         entity_id = self.entity[entity_num]["id"]
         return entity_id
 
+
 # TODO: EntityStore dataclass for all entity types
+# TODO: have one instance EntityStore contain all entities within their respective stores, or something else?
+# FIXME: Rename *Stores to something more appropriate, and by extension the other classes
 @dataclass
 class EntityStore:
     """Store all entities in a dataclass"""
+
     name: str
-    entity_type: str
-    entity_id: str
-
-#
-# TESTING ONLY; REMOVE WHEN DONE
-#
-def main():
-    obj = EntityStore("vents", "abababababababa", "joe mama")
-    print(obj)
-
-if __name__ == '__main__':
-    main()
+    entity_id: str = field(repr=False)
