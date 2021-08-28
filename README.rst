@@ -7,7 +7,9 @@ Usage
 Ignis is asynchronous, meaning to use it in a synchronous script you must import the ``asyncio`` library
 
 Example:
-.. code:: python
+
+.. code-block:: python
+
           import asyncio
 
           # TODO: more stuff here
