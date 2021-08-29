@@ -1,6 +1,7 @@
 """Manage vent entities"""
-from .common import Entity, EntityStore
 from dataclasses import dataclass
+
+from .common import Entity, EntityStore
 
 
 class Vent(Entity):

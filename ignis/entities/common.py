@@ -1,7 +1,8 @@
 """Common code between all entities"""
-from aiohttp import ClientSession, ClientResponse
-from urllib.parse import urljoin
 from dataclasses import dataclass, field
+from urllib.parse import urljoin
+
+from aiohttp import ClientResponse, ClientSession
 from async_lru import alru_cache
 
 HOST = "https://api.flair.co"
@@ -78,11 +79,9 @@ class Entity:
 
     async def update_entity(self, func):
         """Wrapper to update list of entities"""
-        # How to make code entity independent and add entity specific code in
-        # subclasses? Maybe turn this into a wrapper?
         async def update(self):
             status = await self.get_list()
-            func(self.entity)
+            await func(self.entity)
             return status
 
         return update
