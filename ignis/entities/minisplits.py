@@ -20,6 +20,25 @@ class Minisplits(Entity):
             entity_id = await super().id_from_name(name)
         return await super().get(entity_id)
 
+    async def control(self, **kwargs):
+        """Control minisplits with various settings"""
+        # TODO: add constraints support
+        entity_id = kwargs.get("entity_id")
+        temperature = kwargs.get("temperature")
+        fan_speed = kwargs.get("swing")
+        mode = kwargs.get("mode")
+        power = kwargs.get("power")
+        body = {
+            "temperature": temperature,
+            "fan-speed": fan_speed,
+            "mode": mode,
+            "power": power,
+        }
+        if entity_id is None:
+            name = kwargs.get("name")
+            entity_id = super().id_from_name(name)
+        return await super().control(entity_id, body)
+
     @Entity.update_entity
     async def update_minisplits(self, entity):
         for key, value in entity:

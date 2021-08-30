@@ -49,12 +49,12 @@ class Entity:
     """Template for entity types"""
 
     def __init__(self, token):
-        self.token = token
         self.entity_type = None
         self.entity_list: list[EntityStore] = []
         self.opts = {
             "Accept": "application/vnd.api+json",
             "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
         }
 
     async def get_list(self):

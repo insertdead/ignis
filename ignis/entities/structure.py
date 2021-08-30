@@ -20,6 +20,24 @@ class Structures(Entity):
             entity_id = await super().id_from_name(name)
         return await super().get(entity_id)
 
+    async def control(self, **kwargs):
+        """Change settings of structures"""
+        entity_id = kwargs.get("entity_id")
+        temperature_scale = kwargs.get("temperature_scale")
+        is_home = kwargs.get("is_home")
+        structure_heat_cool_mode = kwargs.get("structure_heat_cool_mode")
+        auto_mode = kwargs.get("auto_mode")
+        body = {
+            "temperature_scale": temperature_scale,
+            "home": is_home,
+            "structure_heat_cool_mode": structure_heat_cool_mode,
+            "auto_mode": auto_mode,
+        }
+        if entity_id is None:
+            name = kwargs.get("name")
+            entity_id = await super().id_from_name(name)
+        return await super().control(entity_id, body)
+
     @Entity.update_entity
     async def update_structures(self, entity):
         for key, value in entity:
@@ -28,10 +46,10 @@ class Structures(Entity):
                 StructureStore(
                     entity_attributes["name"],
                     entity["id"],
-                    entity_attributes["set-point-c"],
-                    entity_attributes["current-temperature-c"],
-                    entity_attributes["current-humidity"],
-                    entity_attributes["active"],
+                    entity_attributes["temperature_scale"],
+                    entity_attributes["home"],
+                    entity_attributes["structure-heat-cool-mode"],
+                    entity_attributes["mode"]
                 )
             )
 
@@ -41,7 +59,7 @@ class StructureStore(EntityStore):
     """Store structure entities"""
 
     name: str
-    set_point_c: float
-    current_temperature_c: float
-    current_humidity: float
-    active: bool
+    temperature_scale: "C" | "F"
+    home: bool
+    structure_heat_cool_mode: str
+    mode: str
