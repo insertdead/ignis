@@ -22,6 +22,7 @@ class Structures(Entity):
 
     async def control(self, **kwargs):
         """Change settings of structures"""
+        # NOTE: not sure if possible to control structure settings or not; check later
         entity_id = kwargs.get("entity_id")
         temperature_scale = kwargs.get("temperature_scale")
         is_home = kwargs.get("is_home")

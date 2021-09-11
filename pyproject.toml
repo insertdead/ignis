@@ -8,6 +8,7 @@ authors = ["insertead"]
 python = "^3.8"
 aiohttp = "^3.7.4"
 async_lru = "^1.0.2"
+msgpack = "^1.0.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
