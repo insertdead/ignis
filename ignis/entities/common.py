@@ -1,11 +1,13 @@
 """Common code between all entities"""
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
+from functools import wraps
 
 from aiohttp import ClientResponse, ClientSession
 from async_lru import alru_cache
 
 HOST = "https://api.flair.co"
+SCOPE = "thermostats.view+structures.view+structures.edit"
 
 
 class Util:
@@ -25,9 +27,15 @@ class Util:
 class Auth:
     """Authenticate with API"""
 
-    def __init__(self, ident, access_token):
+    def __init__(self, ident, access_token, scope, logger: logging.getLogger()):
         self.ident = ident
         self.access_token = access_token
+        self.scope = scope
+        self.logger = logger
+        self.opts = {
+            "Accept": "application/vnd.api+json",
+            "Content-Type": "application/json",
+        }
 
     async def oauth_token(self):
         """Retrieve OAuth2 token from API"""
@@ -35,14 +43,16 @@ class Auth:
         url = await u.create_url("/oauth/token")
         credentials = {
             "client_id": self.ident,
-            "client_token": self.access_token,
-            "grant_type": "credentials",
+            "client_secret": self.access_token,
+            "grant_type": 'client_credentials',
         }
-        async with ClientSession as session:
-            async with session.post(url, params=credentials) as resp:
+
+        async with ClientSession() as session:
+            async with session.post(url, params=credentials, headers=self.opts) as resp:
                 json = await resp.json()
-                self.token = json["access_token"]
-                return await resp.status
+                token = json["access_token"]
+                self.logging.info(f"status returned from method {__name__}")
+                return token
 
 
 class Entity:
@@ -61,8 +71,8 @@ class Entity:
         """Get a list of entities of a certain type"""
         u = Util()
         url = await u.create_url(f"/api/{self.entity_type}")
-        async with ClientSession as session:
-            async with session.get(url, params=self.opts) as resp:
+        async with ClientSession() as session:
+            async with session.get(url, headers=self.opts) as resp:
                 json = await resp.json()
                 self.entity = json
                 return await resp.status
@@ -71,13 +81,14 @@ class Entity:
         """Get information on an entity in the API"""
         u = Util()
         url = await u.entity_url(self.entity_type, entity_id)
-        async with ClientSession as session:
-            async with session.get(url, params=self.opts) as resp:
+        async with ClientSession() as session:
+            async with session.get(url, headers=self.opts) as resp:
                 json = await resp.json()
                 self.entity_response = json
                 return await resp.status
 
-    async def update_entity(self, func):
+    # FIXME: Async wrappers are weird
+    def update_entity(func): # noqa
         """Wrapper to update list of entities"""
         async def update(self):
             status = await self.get_list()
@@ -91,8 +102,8 @@ class Entity:
         u = Util()
         url = await u.entity_url(self.__name__, entity_id)
         __body = {"data": {"type": self.entity_type, "attributes": body}}
-        async with ClientSession as session:
-            async with session.patch(url, data=__body, params=self.opts) as resp:
+        async with ClientSession() as session:
+            async with session.patch(url, data=__body, headers=self.opts) as resp:
                 return await resp.status
 
     @alru_cache

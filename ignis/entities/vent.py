@@ -25,8 +25,7 @@ class Vent(Entity):
 
     @Entity.update_entity
     async def update_vents(self, entity):
-        # Pretty much just temporary pseudocode
-        # Probably gonna have to do some kind of dictionary comprehension
+        """Update the list of vents"""
         for key, value in entity:
             entity_attributes = entity[key]["attributes"]
             self.vents.append(
@@ -44,7 +43,8 @@ class VentStore(EntityStore):
     """Store all vents entities"""
 
     name: str
-    is_open: bool | int  # or keep as int? not sure if I should stray from using bools in favor of a miniscule performance increase
+    is_open: bool # or keep as int? not sure if I should stray from using bools in favor of a miniscule performance increase
+    is_open: int
     reason: str
 
     # FIXME: if self.is_open == None then will be converted to False
