@@ -27,11 +27,10 @@ class Util:
 class Auth:
     """Authenticate with API"""
 
-    def __init__(self, ident, access_token, scope, logger: logging.getLogger()):
+    def __init__(self, ident, access_token, scope):
         self.ident = ident
         self.access_token = access_token
         self.scope = scope
-        self.logger = logger
         self.opts = {
             "Accept": "application/vnd.api+json",
             "Content-Type": "application/json",
@@ -51,15 +50,14 @@ class Auth:
             async with session.post(url, params=credentials, headers=self.opts) as resp:
                 json = await resp.json()
                 token = json["access_token"]
-                self.logging.info(f"status returned from method {__name__}")
                 return token
 
 
 class Entity:
     """Template for entity types"""
 
-    def __init__(self, token):
-        self.entity_type = None
+    def __init__(self, token, entity_type):
+        self.entity_type = entity_type
         self.entity_list: list[EntityStore] = []
         self.opts = {
             "Accept": "application/vnd.api+json",
@@ -75,7 +73,7 @@ class Entity:
             async with session.get(url, headers=self.opts) as resp:
                 json = await resp.json()
                 self.entity = json
-                return await resp.status
+                return resp.status
 
     async def get(self, entity_id):
         """Get information on an entity in the API"""
@@ -85,7 +83,7 @@ class Entity:
             async with session.get(url, headers=self.opts) as resp:
                 json = await resp.json()
                 self.entity_response = json
-                return await resp.status
+                return resp.status
 
     # FIXME: Async wrappers are weird
     def update_entity(func): # noqa
@@ -100,11 +98,11 @@ class Entity:
     async def control(self, entity_id, body):
         """POST request to API to change entity properties"""
         u = Util()
-        url = await u.entity_url(self.__name__, entity_id)
+        url = await u.entity_url(self.entity_type, entity_id)
         __body = {"data": {"type": self.entity_type, "attributes": body}}
         async with ClientSession() as session:
             async with session.patch(url, data=__body, headers=self.opts) as resp:
-                return await resp.status
+                return resp.status
 
     @alru_cache
     async def id_from_name(self, name):
@@ -113,13 +111,14 @@ class Entity:
         entity_num = next(
             (
                 i
-                for i, item in enumerate(self.entity)
+                for i, item in enumerate(self.entity["data"])
                 if item["attributes"]["name"] is name
             ),
             None,
         )
-        entity_id = self.entity[entity_num]["id"]
-        return entity_id
+        print(self.entity)
+        # entity_id = self.entity[entity_num]["id"]
+        # return entity_id
 
 
 # TODO: EntityStore dataclass for all entity types

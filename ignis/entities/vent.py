@@ -12,12 +12,13 @@ class Vent(Entity):
         self.vents: list[VentStore] = []
         super().__init__(token, entity_type)
 
-    async def control(self, status: bool, **kwargs):
+    async def control(self, status: int or bool, **kwargs):
         """Control the vents as if they were a switch"""
         entity_id = kwargs.get("entity_id")
-        status = 100 if status is True else 0
+        if status is bool:
+            assert False, "Not implemented"
         reason = kwargs.get("custom_reason") if not None else "ignis"
-        body = {"percent_open": status, "reason": f"{status} by {reason}"}
+        body = {"percent-open": status, "percent-open-reason": f"{status} by {reason}"}
         if entity_id is None:
             name = kwargs.get("name")
             entity_id = await super().id_from_name(name)
