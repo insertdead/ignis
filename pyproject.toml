@@ -5,13 +5,13 @@ description = "Interact with flair api"
 authors = ["insertead"]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.10"
 aiohttp = "^3.7.4"
-async_lru = "^1.0.2"
 msgpack = "^1.0.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
+pytest-asyncio = "^0.16.0"
 isort = "^5.9.3"
 black = "^21.7b0"
 
