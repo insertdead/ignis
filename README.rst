@@ -9,7 +9,9 @@ A synchronous wrapper is planned, but is not yet implemented, so for the time be
 Example:
 
 .. code-block:: python
-    from ignis.ignis import Ignis, Vent
+    
+    from ignis.ignis import Ignis
+    from ignis.entities import Vent
 
     async def main():
         i = Ignis("IDENT", "TOKEN", lazy_mode = False)
