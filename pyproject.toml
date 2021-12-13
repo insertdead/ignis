@@ -3,6 +3,14 @@ name = "ignis"
 version = "0.1.0"
 description = "Interact with flair api"
 authors = ["insertead"]
+readme = "README.rst"
+license = "Apache-2.0"
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
