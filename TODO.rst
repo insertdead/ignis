@@ -10,3 +10,5 @@ TODO
 7. Use OAuth Authorize functionality to get a token (Or add as an alternative to using dev credentials)
    - Would especially be useful for the Home-assistant integration as not all users will be willing to create dev tokens
 8. Restrict access to entities and actions outside of the provided scope (Prevent unneeded fatal exceptions)
+9. Add ID, token and code types (classes) for more robust error handling
+   - Note that this might not be all that useful for the scope of this project, though it may be fun to implement nevertheless :)

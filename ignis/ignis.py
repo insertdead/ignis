@@ -1,4 +1,4 @@
-"""Main module for Ignis"""
+"""Main module for Ignis."""
 import asyncio
 import datetime
 import logging
@@ -10,7 +10,7 @@ import msgpack
 from aiohttp.client import ClientSession
 
 from .entities import Entity
-from .utils import Util
+from .utils import APIError, Util
 
 HOST = "https://api.flair.co"
 SCOPE = "thermostats.view+structures.view+structures.edit"
@@ -22,7 +22,7 @@ DEFAULT_HEADERS = {
 
 @unique
 class Entities(Enum):
-    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API"""
+    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API."""
 
     USER = "users"
     STRUCTURE = "structures"
@@ -35,12 +35,18 @@ class Entities(Enum):
 
 # FIXME: Rename
 class Ignis:
-    """Main class for Ignis
+    """Main class for Ignis.
+
     Setup is handled by the `__setup` private method with some of the class args, retrieving an access token and setting up logging.
     Feed `Ignis` instance to Entity instances to allow them to connect to the API.
+
+    NOTE: This class should only have *one* instance per user/account.
     """
 
-    def __init__(self, ident: str, access_token: str, log_level="DEBUG", **kwargs):
+    def __init__(
+        self, ident: str, access_token: str, log_level: str = "DEBUG", **kwargs
+    ):
+        """Set some parameters and set up the instance."""
         self.lazy_mode: bool = kwargs.get("lazy_mode", True)
         scope: Optional[str] = kwargs.get("scope")
         self.scope: str = f"{SCOPE}+{scope}"
@@ -49,7 +55,7 @@ class Ignis:
         asyncio.run(self.__setup(ident, access_token, log_level))
 
     async def __setup(self, ident, access_token, log_level):
-        """Offloading boiler to another method to clear up `__init__`"""
+        """Offloading boiler to another method to clear up `__init__`."""
         # Setup logging
         logging.getLogger(__name__)
         logging.basicConfig(
@@ -59,9 +65,11 @@ class Ignis:
 
         # Get credentials
         logging.info("Retrieving credentials from API with supplied authentication")
-        await self.__auth(ident, access_token)
+        self.token: str = await self.__authentication(ident, access_token)
 
-    async def __auth(self, ident, access_token):
+    # TODO: rename and add method for authenticating via authorization method
+    async def __authentication(self, ident: str, access_token: str) -> str:
+        """Private method to retrieve credentials from the API, using the authentication method."""
         u = Util()
         match self.__legacy_oauth:
             case False:  # Use OAuth 2.0 (Recommended)
@@ -78,20 +86,31 @@ class Ignis:
                         json = await resp.json()
                         token = json.get("access_token")
                         if resp.status is not 200:
-                            # FIXME: Maybe raise an exception instead or retry
-                            logging.error(
-                                f"""Error code received from HTTP response: {resp.status}\n
-                                HTTP Response:\n{resp.text}"""
+                            raise APIError(
+                                f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
+                                str(resp.text),
                             )
                         return token
 
             case True:  # Use OAuth 1.0
                 url = await u.create_url("/oauth/token")
-                raise NotImplementedError()
+                raise NotImplementedError(
+                    "OAuth 1.0 not yet supported! Check back later :)"
+                )
+
+        async def __authorization(self, application_id: str, return_uri: str) -> str:
+            """Use the authorization workflow for OAuth.
+
+            Note that only OAuth 2.0 is supported for this workflow.
+            """
+            raise NotImplementedError(
+                "Authorization is not yet supported! Check back later :)"
+            )
 
     @property
-    def lazy_mode(self):  # type: ignore
+    def lazy_mode(self) -> bool:  # type: ignore
         """Whether or not to lazily evaluate.
+
         Default is `True` as lazy evaluation will generally provide a better user experience
         """
         logging.info(
@@ -107,35 +126,42 @@ class Ignis:
         self.__lazy_mode = new_mode
 
     @property
-    def headers(self):
-        """Default headers to use.
+    def headers(self) -> dict:
+        """Headers used by default.
+
         Should not be changed, only read
         """
         logging.info(
             f"Getter called for headers. Headers are currently: {self.__headers}"
         )
 
+        return self.__headers
+
     async def refresh(self):
-        """Refresh credentials"""
+        """Refresh credentials.
+
+        This is usually done automatically on a timer, but can be manually run if needed
+        """
         raise NotImplementedError()
 
 
-# NOTE: Experimental feature, no idea if it will even increase performance
 # TODO: Maybe for the cache refreshing function, get a hash of file and new data
 # and compare. If hashes are different, then write data.
+# FIXME: Use pickling instead because it's not for cross-language use, just storing data in a more compact form
 class EntityCache:
-    """
-    Create and manage a cache containing a list of entities, aiding in part
-    with the lazy-loading aspect of this library
+    """Create and manage a cache containing a list of entities.
+
+    This will aid the lazy-loading aspect of this library
     """
 
     def __init__(self, entity_type):
+        """Check if the cache exists and get the entity type."""
         self.cache_exists = True if exists(".entity_cache/") is True else False
         self.entity_type = entity_type
         raise NotImplementedError("Not working on this right now, come back later! :-)")
 
     async def create_cache(self):
-        """Create a cache containing entities"""
+        """Create a cache containing entities."""
         # Tell Entity class about entity type
         # e = common.Entity()
         e = NotImplemented
@@ -150,7 +176,7 @@ class EntityCache:
         cache.close()
 
     async def refresh_cache(self):
-        """Refresh the entity cache"""
+        """Refresh the entity cache."""
         if self.cache_exists is False:
             logging.error("Cache does not exist! Skipping")
             pass

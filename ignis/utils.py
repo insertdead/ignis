@@ -6,12 +6,14 @@ from ignis.ignis import HOST, Entities
 
 # Exceptions
 class EntityError(Exception):
-    """General Error class for errors related to the `Entity` class
+    """General Error class for errors related to the `Entity` class.
+
     Uses include:
         - Incorrect arguments fed to the `Entity` class
         - Entity name or id does not exist, or do not match
 
-    Should *not* be used without an argument"""
+    Should *not* be used without an argument
+    """
 
     def __init__(self, *args):
         self.message = args[0] if args else None
@@ -24,7 +26,7 @@ class EntityError(Exception):
 
 
 class EntityAttributeError(Exception):
-    """Raise when an attribute is wrongly set, or doesn't exist"""
+    """Raise when an attribute is wrongly set, or doesn't exist."""
 
     def __init__(self, *args: str):
         self.message = args[0] if args else None
@@ -36,8 +38,28 @@ class EntityAttributeError(Exception):
             return "EntityAttributeError: Attribute is incorrect, or doesn't exist"
 
 
+class APIError(Exception):
+    """Raise when API returns an error, and print the error out.
+
+    If a normally unreachable state is reached in a part of code interacting with the API, this should be preferred over `Unreachable()`
+    """
+
+    def __init__(self, *args: str):
+        self.message = args[0] if args else None
+        self.error = args[1] if args[1] else None
+
+    def __str__(self) -> str:
+        if self.message and self.error:
+            return f"{self.message}\nHTTP error received: {self.error}"
+        elif self.message:
+            return f"{self.message}"
+        else:
+            return "An unknown error occurred with the API. Please create an issue at <https://github.com/insertdead/ignis/issues>"
+
+
 class Unreachable(Exception):
-    """Used in scenarios when something should be not possible to reach
+    """Used in scenarios when something should be not possible to reach.
+
     Examples:
         - A control flow statement that should not evaluate to `True`
         - Reaching the end of an action that should have ended earlier or in some other way
@@ -55,7 +77,7 @@ class Unreachable(Exception):
 
 # Utlilities packaged into one class
 class Util:
-    """Common utilities packaged into one class for convenience"""
+    """Common utilities packaged into one class for convenience."""
 
     async def create_url(self, path: str):
         """Create a valid URL for the API"""
