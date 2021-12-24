@@ -22,7 +22,10 @@ DEFAULT_HEADERS = {
 
 @unique
 class Entities(Enum):
-    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API."""
+    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API.
+
+    If you plan to add an entity type, you *must* add it to this enum.
+    """
 
     USER = "users"
     STRUCTURE = "structures"
@@ -33,8 +36,7 @@ class Entities(Enum):
     THERMOSTAT = "thermostats"
 
 
-# FIXME: Rename
-class Ignis:
+class Config:
     """Main class for Ignis.
 
     Setup is handled by the `__setup` private method with some of the class args, retrieving an access token and setting up logging.
@@ -67,7 +69,7 @@ class Ignis:
         logging.info("Retrieving credentials from API with supplied authentication")
         self.token: str = await self.__authentication(ident, access_token)
 
-    # TODO: rename and add method for authenticating via authorization method
+    # TODO: add method for authenticating via authorization method
     async def __authentication(self, ident: str, access_token: str) -> str:
         """Private method to retrieve credentials from the API, using the authentication method."""
         u = Util()
@@ -145,9 +147,8 @@ class Ignis:
         raise NotImplementedError()
 
 
-# TODO: Maybe for the cache refreshing function, get a hash of file and new data
-# and compare. If hashes are different, then write data.
-# FIXME: Use pickling instead because it's not for cross-language use, just storing data in a more compact form
+# FIXME: Use redis instead because of its speed and it actually being a database
+# TODO: Add to project readme that *if* redis features are to be used, the redis server must of course be installed
 class EntityCache:
     """Create and manage a cache containing a list of entities.
 
