@@ -16,7 +16,7 @@ Example:
     async def main():
         i = Ignis("IDENT", "TOKEN", lazy_mode = False)
 
-        vent1 = Vent(Ignis, "patio-cottage")
+        vent1 = Vent(i, "patio-cottage")
         await vent1.toggle()
 
 Planned Features
