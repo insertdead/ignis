@@ -1,13 +1,13 @@
 """Common code between all entities."""
 import asyncio
 import logging
+from abc import ABC, ABCMeta, abstractmethod
 from typing import Optional
 
 from aiohttp import ClientSession
 from attr import attr
 
 from ignis.ignis import AbstractConfig, Entities
-from abc import ABC, ABCMeta, abstractmethod
 
 from .utils import APIError, EntityAttributeError, EntityError, Unreachable, Util
 
@@ -47,7 +47,9 @@ async def get(token: str, entity_type: Entities, entity_id: str) -> dict:
         raise Unreachable()
 
 
-async def get_list(websession: ClientSession, token: str, entity_type: Entities) -> dict:
+async def get_list(
+    websession: ClientSession, token: str, entity_type: Entities
+) -> dict:
     """Get a list of entities of a certain type."""
     u = Util()
 
@@ -70,7 +72,11 @@ async def get_list(websession: ClientSession, token: str, entity_type: Entities)
 
 
 async def id_from_name(
-    websession: ClientSession, token: str, entity_type: Entities, attributes: dict, name: str
+    websession: ClientSession,
+    token: str,
+    entity_type: Entities,
+    attributes: dict,
+    name: str,
 ) -> str:
     """Get entity ID from its name."""
     # TODO: Once redis database functionality is enabled, add a case statement that goes through the methods of finding the id
@@ -90,12 +96,20 @@ async def id_from_name(
     logging.info(f"Got id `{entity_id}` from name `{name}`")
     return entity_id
 
-async def control(websession: ClientSession, token: str, entity_id: str, entity_type: Entities, attributes: dict, **kwargs):
+
+async def control(
+    websession: ClientSession,
+    token: str,
+    entity_id: str,
+    entity_type: Entities,
+    attributes: dict,
+    **kwargs,
+):
     """Control an entity via POST http requests."""
     u = Util()
     url: str = await u.entity_url(entity_type, entity_id)
     additional_data: dict = kwargs.get("additional_data", {})
-    
+
     headers = DEFAULT_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
 
@@ -108,14 +122,15 @@ async def control(websession: ClientSession, token: str, entity_id: str, entity_
         if resp.status is not 200:
             raise APIError(
                 f"Error code {resp.status} returned from API. Check the provided token!",
-                str(resp.text)
+                str(resp.text),
             )
         json = await resp.json()
-    
+
     if json:
         return json
     else:
         raise Unreachable()
+
 
 class AbstractEntity(ABC):
     """Superclass of all Entity classes.
@@ -123,7 +138,9 @@ class AbstractEntity(ABC):
     Can also be used to add a custom entity type not implemented in the library with relative ease.
     """
 
-    def __init__(self, config: AbstractConfig, entity_type: Entities, **kwargs: Optional[str]):
+    def __init__(
+        self, config: AbstractConfig, entity_type: Entities, **kwargs: Optional[str]
+    ):
         """Prepare some variables and get boilerplate out of the way."""
         self.config: AbstractConfig = config
         self.entity_type: Entities = entity_type
@@ -132,7 +149,7 @@ class AbstractEntity(ABC):
         self.__attributes: dict = {}
         if self.__name or self.__entity_id is None:
             raise EntityError("Either `name` or `entity_id` must be set")
-        
+
     @abstractmethod
     async def control(self):
         """Modify the entity's attributes."""
@@ -164,7 +181,11 @@ class AbstractEntity(ABC):
             logging.warn("entity_id does not exist, retrieving it from API")
             entity_id = asyncio.run(
                 id_from_name(
-                    self.config.websession, self.config.token, self.entity_type, self.attributes, self.name
+                    self.config.websession,
+                    self.config.token,
+                    self.entity_type,
+                    self.attributes,
+                    self.name,
                 )
             )
         else:
@@ -187,6 +208,7 @@ class AbstractEntity(ABC):
         )
         return self.__attributes
 
+
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
 
@@ -198,4 +220,3 @@ class User(AbstractEntity):
             - `email`: user's email (read-only)
             - various preferences, such as the temperature scale, the default temperature preference, etc.
         """
-        

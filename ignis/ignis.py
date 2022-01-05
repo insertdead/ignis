@@ -2,6 +2,9 @@
 import asyncio
 import datetime
 import logging
+import secrets
+import string
+from abc import ABC, abstractmethod
 from enum import Enum, unique
 from os.path import exists
 from typing import Optional
@@ -11,9 +14,6 @@ from aiohttp.client import ClientSession
 
 from .entities import Entity
 from .utils import APIError, Util
-from abc import ABC, abstractmethod
-import secrets
-import string
 
 HOST = "https://api.flair.co"
 SCOPE = "thermostats.view+structures.view+structures.edit"
@@ -22,10 +22,11 @@ DEFAULT_HEADERS = {
     "Content-Type": "application/json",
 }
 
+
 async def gen_oauth_state() -> str:
     """Generate a state code for OAuth."""
     alphabet = string.ascii_letters + string.digits
-    state = ''.join(secrets.choice(alphabet) for i in range(10))
+    state = "".join(secrets.choice(alphabet) for i in range(10))
     return state
 
 
@@ -49,7 +50,7 @@ class AbstractConfig(ABC):
     """Setup class for Ignis.
 
     In most cases, this class by itself should be usable, but should one want to
-    use authorization, they must provide a subclass providing the code that will 
+    use authorization, they must provide a subclass providing the code that will
     enable getting the code and opening a browser along with all those shenanigans,
     as methods to do this can vary wildly depending on the use-case and environment.
     This package comes with two pre-made subclasses that implement authorization
@@ -63,7 +64,12 @@ class AbstractConfig(ABC):
     """
 
     def __init__(
-        self, websession: ClientSession, ident: str, access_token: str, log_level: str = "DEBUG", **kwargs
+        self,
+        websession: ClientSession,
+        ident: str,
+        access_token: str,
+        log_level: str = "DEBUG",
+        **kwargs,
     ):
         """Set some parameters and set up the instance."""
         self.lazy_mode: bool = kwargs.get("lazy_mode", True)
@@ -71,7 +77,9 @@ class AbstractConfig(ABC):
         scope: Optional[str] = kwargs.get("scope")
         self.scope: str = f"{SCOPE}+{scope}"
         self.__legacy_oauth: bool = kwargs.get("legacy_oauth", False)
-        self.authorization: bool = False if self.__legacy_oauth is True else kwargs.get("authorization", False)
+        self.authorization: bool = (
+            False if self.__legacy_oauth is True else kwargs.get("authorization", False)
+        )
         self.__headers: dict = kwargs.get("headers", DEFAULT_HEADERS)
         asyncio.run(self.__setup(ident, access_token, log_level))
 
@@ -157,15 +165,20 @@ class AbstractConfig(ABC):
         if needed.
         """
 
+
 class HassConfig(AbstractConfig):
     """Prepackaged class to be used by homeassistant and its OAuth facilities.
-    
+
     Only really meant to be an example of sorts, however it's used in my
     homeassistant integration, for those who also want to see an example use of such a class
     """
 
     def __init__(
-        self, websession: ClientSession, token_manager, log_level: str = "DEBUG", **kwargs
+        self,
+        websession: ClientSession,
+        token_manager,
+        log_level: str = "DEBUG",
+        **kwargs,
     ):
         """Set some parameters and set up the instance."""
         self.lazy_mode: bool = kwargs.get("lazy_mode", True)
@@ -174,7 +187,9 @@ class HassConfig(AbstractConfig):
         scope: Optional[str] = kwargs.get("scope")
         self.scope: str = f"{SCOPE}+{scope}"
         self.__legacy_oauth: bool = kwargs.get("legacy_oauth", False)
-        self.authorization: bool = False if self.__legacy_oauth is True else kwargs.get("authorization", False)
+        self.authorization: bool = (
+            False if self.__legacy_oauth is True else kwargs.get("authorization", False)
+        )
         self.__headers: dict = kwargs.get("headers", DEFAULT_HEADERS)
         asyncio.run(self.__setup(log_level))
 
@@ -195,10 +210,10 @@ class HassConfig(AbstractConfig):
 
         await self.token_manager.fetch_access_token()
         await self.token_manager.save_access_token()
-        
+
         self.token = self.token_manager.access_token
         return
-    
+
     async def refresh(self):
         """Refresh credentials.
 
@@ -208,11 +223,12 @@ class HassConfig(AbstractConfig):
         if self.token_manager.is_valid():
             logging.warn("Token still valid! Skipping.")
             pass
-        
+
         await self.token_manager.refresh_token()
         await self.token_manager.save_access_token()
 
         self.token = self.token_manager.access_token
+
 
 # FIXME: Use redis instead because of its speed and it actually being a database
 # TODO: Add to project readme that *if* redis features are to be used, the redis server must of course be installed
