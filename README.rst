@@ -10,13 +10,16 @@ Example:
 
 .. code-block:: python
     
-    from ignis.ignis import Ignis
+    from ignis.ignis import Config
     from ignis.entities import Vent
+    from aiohttp import ClientSession
+
+    websession = ClientSession()
 
     async def main():
-        i = Ignis("IDENT", "TOKEN", lazy_mode = False)
+        c = Config(websession, "IDENT", "TOKEN", lazy_mode = False)
 
-        vent1 = Vent(i, "patio-cottage")
+        vent1 = Vent(c, name="patio-cottage")
         await vent1.toggle()
 
 Planned Features

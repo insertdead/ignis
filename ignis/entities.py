@@ -1,14 +1,13 @@
 """Common code between all entities."""
 import asyncio
 import logging
-from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin
 
 from aiohttp import ClientSession
 from attr import attr
 
-from ignis.ignis import Config, Entities
+from ignis.ignis import AbstractConfig, Entities
+from abc import ABC, ABCMeta, abstractmethod
 
 from .utils import APIError, EntityAttributeError, EntityError, Unreachable, Util
 
@@ -48,7 +47,7 @@ async def get(token: str, entity_type: Entities, entity_id: str) -> dict:
         raise Unreachable()
 
 
-async def get_list(token: str, entity_type: Entities) -> dict:
+async def get_list(websession: ClientSession, token: str, entity_type: Entities) -> dict:
     """Get a list of entities of a certain type."""
     u = Util()
 
@@ -56,14 +55,13 @@ async def get_list(token: str, entity_type: Entities) -> dict:
     headers = DEFAULT_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
 
-    async with ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status is not 200:
-                raise APIError(
-                    f"Error code {resp.status} returned from API. Check the provided token!",
-                    str(resp.text),
-                )
-            json = await resp.json()
+    async with websession.get(url, headers=headers) as resp:
+        if resp.status is not 200:
+            raise APIError(
+                f"Error code {resp.status} returned from API. Check the provided token!",
+                str(resp.text),
+            )
+        json = await resp.json()
 
     if json:
         return json
@@ -72,13 +70,13 @@ async def get_list(token: str, entity_type: Entities) -> dict:
 
 
 async def id_from_name(
-    token: str, entity_type: Entities, attributes: dict, name: str
+    websession: ClientSession, token: str, entity_type: Entities, attributes: dict, name: str
 ) -> str:
     """Get entity ID from its name."""
     # TODO: Once redis database functionality is enabled, add a case statement that goes through the methods of finding the id
     entity_id = attributes.get("id")
     if entity_id is None:
-        entity_list = await get_list(token, entity_type)
+        entity_list = await get_list(websession, token, entity_type)
         entity_num = next(
             (
                 i
@@ -92,22 +90,52 @@ async def id_from_name(
     logging.info(f"Got id `{entity_id}` from name `{name}`")
     return entity_id
 
+async def control(websession: ClientSession, token: str, entity_id: str, entity_type: Entities, attributes: dict, **kwargs):
+    """Control an entity via POST http requests."""
+    u = Util()
+    url: str = await u.entity_url(entity_type, entity_id)
+    additional_data: dict = kwargs.get("additional_data", {})
+    
+    headers = DEFAULT_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
 
-class Entity:
+    body = {}
+    body["data"] = additional_data
+    body["data"]["type"] = entity_type.name
+    body["data"]["attributes"] = attributes
+
+    async with websession.post(url, data=body, headers=headers) as resp:
+        if resp.status is not 200:
+            raise APIError(
+                f"Error code {resp.status} returned from API. Check the provided token!",
+                str(resp.text)
+            )
+        json = await resp.json()
+    
+    if json:
+        return json
+    else:
+        raise Unreachable()
+
+class AbstractEntity(ABC):
     """Superclass of all Entity classes.
 
     Can also be used to add a custom entity type not implemented in the library with relative ease.
     """
 
-    def __init__(self, config: Config, entity_type: Entities, **kwargs: Optional[str]):
+    def __init__(self, config: AbstractConfig, entity_type: Entities, **kwargs: Optional[str]):
         """Prepare some variables and get boilerplate out of the way."""
-        self.config: Config = config
+        self.config: AbstractConfig = config
         self.entity_type: Entities = entity_type
         self.__name: Optional[str] = kwargs.get("name")
         self.__entity_id: Optional[str] = kwargs.get("entity_id")
         self.__attributes: dict = {}
         if self.__name or self.__entity_id is None:
             raise EntityError("Either `name` or `entity_id` must be set")
+        
+    @abstractmethod
+    async def control(self):
+        """Modify the entity's attributes."""
 
     @property
     def name(self) -> str:
@@ -136,7 +164,7 @@ class Entity:
             logging.warn("entity_id does not exist, retrieving it from API")
             entity_id = asyncio.run(
                 id_from_name(
-                    self.config.token, self.entity_type, self.attributes, self.name
+                    self.config.websession, self.config.token, self.entity_type, self.attributes, self.name
                 )
             )
         else:
@@ -158,3 +186,16 @@ class Entity:
             else asyncio.run(get(self.config.token, self.entity_type, self.entity_id))
         )
         return self.__attributes
+
+class User(AbstractEntity):
+    """Entity Class for the users entity type."""
+
+    async def control(self):
+        """Control the user entity.
+
+        Notable settings include:
+            - `name`: username (read-only)
+            - `email`: user's email (read-only)
+            - various preferences, such as the temperature scale, the default temperature preference, etc.
+        """
+        
