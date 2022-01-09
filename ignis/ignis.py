@@ -12,7 +12,6 @@ from typing import Optional
 import msgpack
 from aiohttp.client import ClientSession
 
-from .entities import Entity
 from .utils import APIError, Util
 
 HOST = "https://api.flair.co"
@@ -78,7 +77,7 @@ class AbstractConfig(ABC):
         self.scope: str = f"{SCOPE}+{scope}"
         self.__legacy_oauth: bool = kwargs.get("legacy_oauth", False)
         self.authorization: bool = (
-            False if self.__legacy_oauth is True else kwargs.get("authorization", False)
+            False if self.__legacy_oauth == True else kwargs.get("authorization", False)
         )
         self.__headers: dict = kwargs.get("headers", DEFAULT_HEADERS)
         asyncio.run(self.__setup(ident, access_token, log_level))
@@ -114,7 +113,7 @@ class AbstractConfig(ABC):
                     ) as resp:
                         json = await resp.json()
                         token = json.get("access_token")
-                        if resp.status is not 200:
+                        if resp.status != 200:
                             raise APIError(
                                 f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
                                 str(resp.text),

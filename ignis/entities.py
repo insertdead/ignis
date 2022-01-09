@@ -1,11 +1,11 @@
 """Common code between all entities."""
 import asyncio
 import logging
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC
 from typing import Optional
 
 from aiohttp import ClientSession
-from attr import attr
+# from attr import attr
 
 from ignis.ignis import AbstractConfig, Entities
 
@@ -35,7 +35,7 @@ async def get(token: str, entity_type: Entities, entity_id: str) -> dict:
 
     async with ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
-            if resp.status is not 200:
+            if resp.status != 200:
                 raise APIError(
                     f"Error code {resp.status} returned from API", str(resp.text)
                 )
@@ -58,7 +58,7 @@ async def get_list(
     headers["Authorization"] = f"Bearer {token}"
 
     async with websession.get(url, headers=headers) as resp:
-        if resp.status is not 200:
+        if resp.status != 200:
             raise APIError(
                 f"Error code {resp.status} returned from API. Check the provided token!",
                 str(resp.text),
@@ -87,7 +87,7 @@ async def id_from_name(
             (
                 i
                 for i, item in enumerate(entity_list["data"])
-                if item["attributes"]["name"] is name
+                if item["attributes"]["name"] == name
             ),
             None,
         )
@@ -102,7 +102,7 @@ async def control(
     token: str,
     entity_id: str,
     entity_type: Entities,
-    attributes: dict,
+    attributes: Optional[dict],
     **kwargs,
 ):
     """Control an entity via POST http requests."""
@@ -113,13 +113,16 @@ async def control(
     headers = DEFAULT_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
 
+    if attributes == None and additional_data == {}:
+        raise EntityAttributeError("Missing attributes and additional data! At least one must be set")
+
     body = {}
     body["data"] = additional_data
     body["data"]["type"] = entity_type.name
     body["data"]["attributes"] = attributes
 
     async with websession.post(url, data=body, headers=headers) as resp:
-        if resp.status is not 200:
+        if resp.status != 200:
             raise APIError(
                 f"Error code {resp.status} returned from API. Check the provided token!",
                 str(resp.text),
@@ -150,19 +153,20 @@ class AbstractEntity(ABC):
         if self.__name or self.__entity_id is None:
             raise EntityError("Either `name` or `entity_id` must be set")
 
-    @abstractmethod
-    async def control(self):
-        """Modify the entity's attributes."""
+    # TODO: Debatable if needed
+    # @abstractmethod
+    # async def control(self):
+    #     """Modify the entity's attributes."""
 
     @property
     def name(self) -> str:
         """Getter for the entity name.
 
-        Here to make sure that it is not called if it doesn't exist in a safe way.
+        Here to make sure that it != called if it doesn't exist in a safe way.
         """
         # TODO: add reverse of `id_from_name` and get name from id. Shouldn't be *too* difficult.
         logging.debug(f"Getter called for name.")
-        if self.__name is None:
+        if self.__name == None:
             logging.error("`name` does not exist! Skipping")
             pass
         # type here has been ignored as a type check is placed in the `__init__` method and in the previous `if` statement
@@ -177,7 +181,7 @@ class AbstractEntity(ABC):
         logging.debug(
             f"Getter called for entity_id. entity_id is currently: {self.__entity_id}"
         )
-        if self.__entity_id is None and self.__name is not None:
+        if self.__entity_id == None and self.__name != None:
             logging.warn("entity_id does not exist, retrieving it from API")
             entity_id = asyncio.run(
                 id_from_name(
@@ -197,7 +201,7 @@ class AbstractEntity(ABC):
     def attributes(self) -> dict:
         """Entity attributes, structured more or less as found in the API."""
         # TODO: Get attributes working
-        exists = "not" if self.__attributes is None else ""
+        exists = "not" if self.__attributes == None else ""
         logging.debug(
             f"Getter called for attributes. attributes do {exists} exist for this entity"
         )
@@ -209,14 +213,25 @@ class AbstractEntity(ABC):
         return self.__attributes
 
 
+
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
 
-    async def control(self):
-        """Control the user entity.
+    async def default_temperature_preference(self, temp: Optional[int]) -> Optional[int]:
+        if temp == None:
+            try:
+                entity = await get(self.config.token, self.entity_type, self.entity_id)
+                new_temp = int(entity["data"]["default-temperature-preference-c"])
+                # TODO: redis cache
+            except ValueError:
+                logging.error("Data received from API could not be parsed into int! Skipping")
+                return
+        else:
+            new_temp = temp
 
-        Notable settings include:
-            - `name`: username (read-only)
-            - `email`: user's email (read-only)
-            - various preferences, such as the temperature scale, the default temperature preference, etc.
-        """
+        body = {
+            "default-temperature-preference-c": str(temp)
+        }
+        logging.info(f"Default temperature set to {temp} degrees Celcius!")
+        await control(self.config.websession, self.config.token, self.entity_id, self.entity_type, None, additional_data=body)
+        return new_temp
