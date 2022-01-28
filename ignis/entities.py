@@ -1,15 +1,18 @@
 """Common code between all entities."""
 import asyncio
+import datetime
 import logging
 from abc import ABC
 from typing import Optional
 
 from aiohttp import ClientSession
-# from attr import attr
 
 from ignis.ignis import AbstractConfig, Entities
 
 from .utils import APIError, EntityAttributeError, EntityError, Unreachable, Util
+
+# from attr import attr
+
 
 HOST = "https://api.flair.co"
 DEFAULT_HEADERS = {
@@ -114,7 +117,9 @@ async def control(
     headers["Authorization"] = f"Bearer {token}"
 
     if attributes == None and additional_data == {}:
-        raise EntityAttributeError("Missing attributes and additional data! At least one must be set")
+        raise EntityAttributeError(
+            "Missing attributes and additional data! At least one must be set"
+        )
 
     body = {}
     body["data"] = additional_data
@@ -213,25 +218,87 @@ class AbstractEntity(ABC):
         return self.__attributes
 
 
-
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
 
-    async def default_temperature_preference(self, temp: Optional[int]) -> Optional[int]:
+    async def default_temperature_preference(
+        self, temp: Optional[int]
+    ) -> Optional[int]:
         if temp == None:
             try:
                 entity = await get(self.config.token, self.entity_type, self.entity_id)
                 new_temp = int(entity["data"]["default-temperature-preference-c"])
                 # TODO: redis cache
             except ValueError:
-                logging.error("Data received from API could not be parsed into int! Skipping")
+                logging.error(
+                    "Data received from API could not be parsed into int! Skipping"
+                )
                 return
         else:
             new_temp = temp
 
-        body = {
-            "default-temperature-preference-c": str(temp)
-        }
+        body = {"default-temperature-preference-c": str(temp)}
         logging.info(f"Default temperature set to {temp} degrees Celcius!")
-        await control(self.config.websession, self.config.token, self.entity_id, self.entity_type, None, additional_data=body)
+        await control(
+            self.config.websession,
+            self.config.token,
+            self.entity_id,
+            self.entity_type,
+            None,
+            additional_data=body,
+        )
         return new_temp
+
+
+class Structure(AbstractEntity):
+    """Entity class for the structures entity type.
+
+    Contains most settings useful for the user. Also contains a list of all available rooms.
+    """
+
+    async def temperature_scale(self) -> bool:
+        raise NotImplementedError
+
+    async def home(self, is_home: bool) -> bool:
+        raise NotImplementedError
+
+    async def structure_heat_cool_mode(self) -> str:
+        raise NotImplementedError
+
+    async def mode_toggle(self) -> str:
+        raise NotImplementedError
+
+    async def list_rooms(self) -> list[dict]:
+        raise NotImplementedError
+
+
+class Room(AbstractEntity):
+    """Entity class for the rooms entity type.
+
+    Similarly to structures, it contains settings pertinent to most users, but
+    on a room-by-room basis.
+    """
+
+    async def set_point_c(self, temp: Optional[int]) -> int:
+        raise NotImplementedError
+
+    async def active(self, toggle: bool) -> bool:
+        raise NotImplementedError
+
+    async def current_temperature_c(self) -> float:
+        raise NotImplementedError
+
+    async def current_humidity(self) -> int:
+        raise NotImplementedError
+
+
+class Puck(AbstractEntity):
+    """Entity class for the pucks entity type.
+
+    This puck is read-only, and only used for displaying statistics.
+    """
+
+    async def created_at(self) -> datetime.datetime:
+        raise NotImplementedError
+
+    # async def
