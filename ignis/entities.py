@@ -21,7 +21,9 @@ DEFAULT_HEADERS = {
 }
 
 
-async def get(websession: ClientSession, token: str, entity_type: Entities, entity_id: str) -> dict:
+async def get(
+    websession: ClientSession, token: str, entity_type: Entities, entity_id: str
+) -> dict:
     """Retrieve an entity from the API.
 
     This should normally be never used anywhere outside the library, but may be used when creating a new entity if needed.
@@ -167,25 +169,30 @@ class AbstractEntity(ABC):
                 self.config.websession,
                 self.config.token,
                 self.entity_type,
-                self.name, # type: ignore
+                self.name,  # type: ignore
             )
         else:
             raise Unreachable()
-        
-        entity = await get(self.config.websession, self.config.token, self.entity_type, self.entity_id)
+
+        entity = await get(
+            self.config.websession, self.config.token, self.entity_type, self.entity_id
+        )
 
         if self.name == None:
             logging.info("name does not exist, retriving it from API")
             try:
                 self.name = entity["attributes"]["name"]
             except KeyError:
-                raise EntityAttributeError("Entity attribute `name` could not be found. Create an issue at <https://github.com/insertdead/ignis>")
+                raise EntityAttributeError(
+                    "Entity attribute `name` could not be found. Create an issue at <https://github.com/insertdead/ignis>"
+                )
 
         return entity
 
 
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
+
     def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
         super().__init__(config, Entities.USER, **kwargs)
 
@@ -206,12 +213,12 @@ class User(AbstractEntity):
 
         body = {"default-temperature-preference-c": str(temp)}
         logging.info(f"Default temperature set to {temp} degrees Celcius!")
-        # type check ignored due to checks that would have already set id as a 
+        # type check ignored due to checks that would have already set id as a
         #  valid id
         await control(
             self.config.websession,
             self.config.token,
-            self.entity_id, # type: ignore
+            self.entity_id,  # type: ignore
             self.entity_type,
             None,
             additional_data=body,
