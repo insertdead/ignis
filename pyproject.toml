@@ -3,7 +3,7 @@ name = "ignis"
 version = "0.1.0"
 description = "Interact with flair api"
 authors = ["insertead"]
-readme = "README.rst"
+readme = "README.md"
 license = "Apache-2.0"
 
 classifiers = [
@@ -16,6 +16,7 @@ classifiers = [
 python = "^3.10"
 aiohttp = "^3.7.4"
 msgpack = "^1.0.2"
+pynvim = "^0.4.3"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"

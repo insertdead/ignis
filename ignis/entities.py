@@ -21,7 +21,7 @@ DEFAULT_HEADERS = {
 }
 
 
-async def get(token: str, entity_type: Entities, entity_id: str) -> dict:
+async def get(websession: ClientSession, token: str, entity_type: Entities, entity_id: str) -> dict:
     """Retrieve an entity from the API.
 
     This should normally be never used anywhere outside the library, but may be used when creating a new entity if needed.
@@ -36,13 +36,12 @@ async def get(token: str, entity_type: Entities, entity_id: str) -> dict:
         f'`get()` function called for entity "{entity_id}" of type {entity_type.name}.'
     )
 
-    async with ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                raise APIError(
-                    f"Error code {resp.status} returned from API", str(resp.text)
-                )
-            json = await resp.json()
+    async with websession.get(url, headers=headers) as resp:
+        if resp.status != 200:
+            raise APIError(
+                f"Error code {resp.status} returned from API", str(resp.text)
+            )
+        json = await resp.json()
 
     if json:
         return json
@@ -78,12 +77,12 @@ async def id_from_name(
     websession: ClientSession,
     token: str,
     entity_type: Entities,
-    attributes: dict,
+    entity: dict,
     name: str,
 ) -> str:
     """Get entity ID from its name."""
     # TODO: Once redis database functionality is enabled, add a case statement that goes through the methods of finding the id
-    entity_id = attributes.get("id")
+    entity_id = entity.get("id")
     if entity_id is None:
         entity_list = await get_list(websession, token, entity_type)
         entity_num = next(
@@ -152,82 +151,50 @@ class AbstractEntity(ABC):
         """Prepare some variables and get boilerplate out of the way."""
         self.config: AbstractConfig = config
         self.entity_type: Entities = entity_type
-        self.__name: Optional[str] = kwargs.get("name")
-        self.__entity_id: Optional[str] = kwargs.get("entity_id")
-        self.__attributes: dict = {}
-        if self.__name or self.__entity_id is None:
+        self.name: Optional[str] = kwargs.get("name")
+        self.entity_id: Optional[str] = kwargs.get("entity_id")
+        self.entity: dict = asyncio.run(self.__setup())
+        if self.name and self.entity_id == None:
             raise EntityError("Either `name` or `entity_id` must be set")
+        # TODO: refactor to get entity info only once
 
-    # TODO: Debatable if needed
-    # @abstractmethod
-    # async def control(self):
-    #     """Modify the entity's attributes."""
-
-    @property
-    def name(self) -> str:
-        """Getter for the entity name.
-
-        Here to make sure that it != called if it doesn't exist in a safe way.
-        """
-        # TODO: add reverse of `id_from_name` and get name from id. Shouldn't be *too* difficult.
-        logging.debug(f"Getter called for name.")
-        if self.__name == None:
-            logging.error("`name` does not exist! Skipping")
-            pass
-        # type here has been ignored as a type check is placed in the `__init__` method and in the previous `if` statement
-        return self.__name  # type: ignore
-
-    @property
-    def entity_id(self) -> str:
-        """Getter for the entity ID.
-
-        Here to retrieve the entity ID if only the name has been provided, for the end-user's convenience.
-        """
-        logging.debug(
-            f"Getter called for entity_id. entity_id is currently: {self.__entity_id}"
-        )
-        if self.__entity_id == None and self.__name != None:
+    async def __setup(self) -> dict:
+        logging.debug(f"Setting up new {self.entity_type.name}")
+        # Get id if it isn't provided, but name is
+        if self.entity_id == None:
             logging.warn("entity_id does not exist, retrieving it from API")
-            entity_id = asyncio.run(
-                id_from_name(
-                    self.config.websession,
-                    self.config.token,
-                    self.entity_type,
-                    self.attributes,
-                    self.name,
-                )
+            self.entity_id = await id_from_name(
+                self.config.websession,
+                self.config.token,
+                self.entity_type,
+                self.name, # type: ignore
             )
         else:
             raise Unreachable()
+        
+        entity = await get(self.config.websession, self.config.token, self.entity_type, self.entity_id)
 
-        return entity_id
+        if self.name == None:
+            logging.info("name does not exist, retriving it from API")
+            try:
+                self.name = entity["attributes"]["name"]
+            except KeyError:
+                raise EntityAttributeError("Entity attribute `name` could not be found. Create an issue at <https://github.com/insertdead/ignis>")
 
-    @property
-    def attributes(self) -> dict:
-        """Entity attributes, structured more or less as found in the API."""
-        # TODO: Get attributes working
-        exists = "not" if self.__attributes == None else ""
-        logging.debug(
-            f"Getter called for attributes. attributes do {exists} exist for this entity"
-        )
-        self.__attributes = (
-            self.__attributes
-            if not {}
-            else asyncio.run(get(self.config.token, self.entity_type, self.entity_id))
-        )
-        return self.__attributes
+        return entity
 
 
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
+    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+        super().__init__(config, Entities.USER, **kwargs)
 
     async def default_temperature_preference(
         self, temp: Optional[int]
     ) -> Optional[int]:
         if temp == None:
             try:
-                entity = await get(self.config.token, self.entity_type, self.entity_id)
-                new_temp = int(entity["data"]["default-temperature-preference-c"])
+                new_temp = int(self.entity["data"]["default-temperature-preference-c"])
                 # TODO: redis cache
             except ValueError:
                 logging.error(
@@ -239,10 +206,12 @@ class User(AbstractEntity):
 
         body = {"default-temperature-preference-c": str(temp)}
         logging.info(f"Default temperature set to {temp} degrees Celcius!")
+        # type check ignored due to checks that would have already set id as a 
+        #  valid id
         await control(
             self.config.websession,
             self.config.token,
-            self.entity_id,
+            self.entity_id, # type: ignore
             self.entity_type,
             None,
             additional_data=body,
@@ -256,8 +225,12 @@ class Structure(AbstractEntity):
     Contains most settings useful for the user. Also contains a list of all available rooms.
     """
 
+    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+        super().__init__(config, Entities.STRUCTURE, **kwargs)
+
     async def temperature_scale(self) -> bool:
-        raise NotImplementedError
+        scale = True if self.entity["attributes"]["temperature-scale"] == "C" else False
+        return scale
 
     async def home(self, is_home: bool) -> bool:
         raise NotImplementedError

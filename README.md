@@ -21,7 +21,7 @@ async def main():
 ```
 
 ## Planned Features
-See (TODO.rst)[https://github.com/insertdead/ignis/blob/master/TODO.rst]
+See [TODO.rst](https://github.com/insertdead/ignis/blob/master/TODO.md)
 
 ## Development
 To install dependencies, first make sure ``poetry`` is installed and on your PATH.
