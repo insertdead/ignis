@@ -5,44 +5,20 @@ import logging
 import secrets
 import string
 from abc import ABC, abstractmethod
-from enum import Enum, unique
 from os.path import exists
 from typing import Optional
 
 import msgpack
 from aiohttp.client import ClientSession
 
-from .utils import APIError, Util
-
-HOST = "https://api.flair.co"
-SCOPE = "thermostats.view+structures.view+structures.edit"
-DEFAULT_HEADERS = {
-    "Accept": "application/vnd.api+json",
-    "Content-Type": "application/json",
-}
+from .utils import DEFAULT_HEADERS, SCOPE, APIError, Util
 
 
 async def gen_oauth_state() -> str:
     """Generate a state code for OAuth."""
     alphabet = string.ascii_letters + string.digits
-    state = "".join(secrets.choice(alphabet) for i in range(10))
+    state = "".join(secrets.choice(alphabet) for _ in range(10))
     return state
-
-
-@unique
-class Entities(Enum):
-    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API.
-
-    If you plan to add an entity type, you *must* add it to this enum.
-    """
-
-    USER = "users"
-    STRUCTURE = "structures"
-    ROOM = "rooms"
-    PUCK = "pucks"
-    VENT = "vents"
-    MINISPLIT = "hvac-units"
-    THERMOSTAT = "thermostats"
 
 
 class AbstractConfig(ABC):

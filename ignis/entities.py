@@ -7,12 +7,16 @@ from typing import Optional
 
 from aiohttp import ClientSession
 
-from ignis.ignis import AbstractConfig, Entities
+from ignis.ignis import AbstractConfig
 
-from .utils import APIError, EntityAttributeError, EntityError, Unreachable, Util
-
-# from attr import attr
-
+from .utils import (
+    APIError,
+    Entities,
+    EntityAttributeError,
+    EntityError,
+    Unreachable,
+    Util,
+)
 
 HOST = "https://api.flair.co"
 DEFAULT_HEADERS = {
@@ -75,6 +79,13 @@ async def get_list(
         raise Unreachable()
 
 
+async def get_rel(
+    websession: ClientSession, token: str, rel: tuple[Entities, Entities]
+) -> list[str]:
+    """Get the relationships between one entity type and another type."""
+    raise NotImplementedError
+
+
 async def id_from_name(
     websession: ClientSession,
     token: str,
@@ -102,8 +113,7 @@ async def id_from_name(
 
 
 async def control(
-    websession: ClientSession,
-    token: str,
+    config: AbstractConfig,
     entity_id: str,
     entity_type: Entities,
     attributes: Optional[dict],
@@ -113,6 +123,8 @@ async def control(
     u = Util()
     url: str = await u.entity_url(entity_type, entity_id)
     additional_data: dict = kwargs.get("additional_data", {})
+    token: str = config.token
+    websession: ClientSession = config.websession
 
     headers = DEFAULT_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
@@ -127,7 +139,7 @@ async def control(
     body["data"]["type"] = entity_type.name
     body["data"]["attributes"] = attributes
 
-    async with websession.post(url, data=body, headers=headers) as resp:
+    async with websession.patch(url, data=body, headers=headers) as resp:
         if resp.status != 200:
             raise APIError(
                 f"Error code {resp.status} returned from API. Check the provided token!",
@@ -155,9 +167,16 @@ class AbstractEntity(ABC):
         self.entity_type: Entities = entity_type
         self.name: Optional[str] = kwargs.get("name")
         self.entity_id: Optional[str] = kwargs.get("entity_id")
-        self.entity: dict = asyncio.run(self.__setup())
+        self.update: bool = False
+
         if self.name and self.entity_id == None:
             raise EntityError("Either `name` or `entity_id` must be set")
+
+        self.entity: dict = asyncio.run(self.__setup())
+        # Create a shorthand for attributes
+        self.attributes = self.entity["attributes"]
+
+        asyncio.create_task(self.__update_entity())
         # TODO: refactor to get entity info only once
 
     async def __setup(self) -> dict:
@@ -189,6 +208,14 @@ class AbstractEntity(ABC):
 
         return entity
 
+    async def __update_entity(self):
+        """Update entity every 5 minutes in background"""
+        # TODO: implement proper error handling to update entity if something goes wrong
+        while True:
+            await asyncio.sleep(300)
+            # Ignore type check due to checks already being made in the code itself
+            self.entity = await get(self.config.websession, self.config.token, self.entity_type, self.entity_id)  # type: ignore
+
 
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
@@ -216,8 +243,7 @@ class User(AbstractEntity):
         # type check ignored due to checks that would have already set id as a
         #  valid id
         await control(
-            self.config.websession,
-            self.config.token,
+            self.config,
             self.entity_id,  # type: ignore
             self.entity_type,
             None,
@@ -236,19 +262,31 @@ class Structure(AbstractEntity):
         super().__init__(config, Entities.STRUCTURE, **kwargs)
 
     async def temperature_scale(self) -> bool:
-        scale = True if self.entity["attributes"]["temperature-scale"] == "C" else False
+        scale = True if self.attributes["temperature-scale"] == "C" else False
         return scale
 
     async def home(self, is_home: bool) -> bool:
-        raise NotImplementedError
+        # Once again, type checks have been done in the code
+        await control(
+            self.config,
+            self.entity_id,  # type: ignore
+            self.entity_type,
+            {"home": is_home},
+        )
+        is_home = self.attributes["home"]
+        return is_home
 
     async def structure_heat_cool_mode(self) -> str:
-        raise NotImplementedError
+        heat_cool_mode = self.attributes["structure-heat-cool-mode"]
+        return heat_cool_mode
 
     async def mode_toggle(self) -> str:
-        raise NotImplementedError
+        mode = self.attributes["mode"]
+        mode = "manual" if mode == "auto" else "auto"
+        return mode
 
-    async def list_rooms(self) -> list[dict]:
+    async def list_rooms(self) -> list[str]:
+        # TODO: implement `get_rel`, which gets the relationship link for an entity
         raise NotImplementedError
 
 
@@ -259,26 +297,114 @@ class Room(AbstractEntity):
     on a room-by-room basis.
     """
 
+    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+        super().__init__(config, Entities.ROOM, **kwargs)
+
     async def set_point_c(self, temp: Optional[int]) -> int:
-        raise NotImplementedError
+        if temp:
+            await control(
+                self.config,
+                self.entity_id,  # type: ignore
+                self.entity_type,
+                {"set-point-c": temp},
+            )
+        return self.attributes["set-point-c"]
 
     async def active(self, toggle: bool) -> bool:
-        raise NotImplementedError
+        active = self.attributes["active"]
+        if toggle == True:
+            active = False if active == True else True
+            await control(
+                self.config,
+                self.entity_id,  # type: ignore
+                self.entity_type,
+                {"active": active},
+            )
+
+        return active
 
     async def current_temperature_c(self) -> float:
-        raise NotImplementedError
+        cur_temp = self.attributes["current-temperature-c"]
+        return cur_temp
 
     async def current_humidity(self) -> int:
-        raise NotImplementedError
+        cur_humid = self.attributes["current-humidity"]
+        return cur_humid
 
 
-class Puck(AbstractEntity):
-    """Entity class for the pucks entity type.
+# class Puck(AbstractEntity):
+#     """Entity class for the pucks entity type.
 
-    This puck is read-only, and only used for displaying statistics.
-    """
+#     This puck is read-only, and only used for displaying statistics.
+#     """
 
-    async def created_at(self) -> datetime.datetime:
-        raise NotImplementedError
+#     async def created_at(self) -> datetime.datetime:
+#         raise NotImplementedError
 
-    # async def
+#     # async def
+
+
+class Vent(AbstractEntity):
+    """Entity class for the vents entity type, most likely the most used."""
+
+    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+        super().__init__(config, Entities.VENT, **kwargs)
+
+    async def toggle(self):
+        """Toggle the vent.
+
+        As of now, vents cannot be anything in between fully open or closed.
+        """
+
+    async def open(self) -> int:
+        """Open the vent."""
+        await control(
+            self.config,
+            self.entity_id,  # type: ignore
+            self.entity_type,
+            {"percent-open": 100},
+        )
+        self.attributes["percent-open"] = 100
+
+        return 100
+
+    async def close(self) -> int:
+        """Close the vent."""
+        await control(
+            self.config,
+            self.entity_id,  # type: ignore
+            self.entity_type,
+            {"percent-open": 0},
+        )
+        self.attributes["percent-open"] = 0
+
+        return 0
+
+    async def status(self) -> int:
+        """Check whether or not the vent is open.
+
+        0 is closed and 100 is open.
+        """
+
+        return self.attributes["percent-open"]
+
+    async def current_reading(self) -> dict:
+        url = await Util().entity_url(
+            self.entity_type, self.entity_id, current_reading=True
+        )
+        headers = DEFAULT_HEADERS.copy()
+        headers["Authorization"] = f"Bearer {self.config.token}"
+
+        async with self.config.websession.get(url, headers=headers) as resp:
+            if resp != 200:
+                raise APIError(
+                    f"Error code {resp.status} returned from API", str(resp.text)
+                )
+            json = await resp.json()
+
+            if json:
+                # TODO: check if this is actually the path for current reading
+                current_reading = json["data"]["attributes"]
+                return current_reading
+            else:
+                raise Unreachable

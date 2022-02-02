@@ -1,7 +1,29 @@
 """Error classes and utilities for Ignis"""
+from enum import Enum, unique
 from urllib.parse import urljoin
 
-from ignis.ignis import HOST, Entities
+HOST = "https://api.flair.co"
+SCOPE = "thermostats.view+structures.view+structures.edit"
+DEFAULT_HEADERS = {
+    "Accept": "application/vnd.api+json",
+    "Content-Type": "application/json",
+}
+
+
+@unique
+class Entities(Enum):
+    """Enum of all implemented entity types found in the API, with a value corresponding to their name in the API.
+
+    If you plan to add an entity type, you *must* add it to this enum.
+    """
+
+    USER = "users"
+    STRUCTURE = "structures"
+    ROOM = "rooms"
+    PUCK = "pucks"
+    VENT = "vents"
+    MINISPLIT = "hvac-units"
+    THERMOSTAT = "thermostats"
 
 
 # Exceptions
@@ -84,7 +106,12 @@ class Util:
         url = urljoin(HOST, path)
         return url
 
-    async def entity_url(self, entity_type: Entities, entity_id):
+    async def entity_url(self, entity_type: Entities, entity_id, current_reading=False):
         """Create a valid URL for an entity in the API"""
-        url = await self.create_url(f"/api/{entity_type.name}/{entity_id}")
+        if current_reading:
+            url = await self.create_url(
+                f"/api/{entity_type.name}/{entity_id}/current_reading"
+            )
+        else:
+            url = await self.create_url(f"/api/{entity_type.name}/{entity_id}")
         return url
