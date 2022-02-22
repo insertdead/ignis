@@ -1,17 +1,17 @@
 """Main module for Ignis."""
 import asyncio
-import datetime
 import logging
 import secrets
 import string
 from abc import ABC, abstractmethod
-from os.path import exists
-from typing import Optional
+from tkinter import W
+from types import TracebackType
+from typing import Optional, Type
 
 import msgpack
 from aiohttp.client import ClientSession
 
-from .utils import DEFAULT_HEADERS, SCOPE, APIError, Util
+from .utils import DEFAULT_HEADERS, SCOPE, APIError, Unreachable, Util
 
 
 async def gen_oauth_state() -> str:
@@ -21,6 +21,10 @@ async def gen_oauth_state() -> str:
     return state
 
 
+# NOTE: I assume it is not too inefficient to just initiate a new ClientSession
+#   for every operation, and it would solve many issues related to the event
+#   loop. If it does indeed pose a performance issue, I will patch together a
+#   hack to fix this
 class AbstractConfig(ABC):
     """Setup class for Ignis.
 
@@ -40,67 +44,76 @@ class AbstractConfig(ABC):
 
     def __init__(
         self,
-        websession: ClientSession,
         ident: str,
         access_token: str,
+        scope: str,
         log_level: str = "DEBUG",
         **kwargs,
     ):
         """Set some parameters and set up the instance."""
-        self.lazy_mode: bool = kwargs.get("lazy_mode", True)
-        self.websession = websession
-        scope: Optional[str] = kwargs.get("scope")
-        self.scope: str = f"{SCOPE}+{scope}"
-        self.__legacy_oauth: bool = kwargs.get("legacy_oauth", False)
-        self.authorization: bool = (
-            False if self.__legacy_oauth == True else kwargs.get("authorization", False)
-        )
-        self.__headers: dict = kwargs.get("headers", DEFAULT_HEADERS)
-        asyncio.run(self.__setup(ident, access_token, log_level))
+        self.access_token = access_token
+        self.authorization = kwargs.get("authorization", False)
+        self.headers = kwargs.get("headers", DEFAULT_HEADERS)
+        self.ident = ident
+        self.log_level = log_level
+        self.legacy_oauth = kwargs.get("legacy_oauth", False)
+        self.scope = scope
+        self.__lazy_mode = kwargs.get("lazy_mode", True)
+        asyncio.run(self._init())
 
     @abstractmethod
-    async def __setup(self, ident, access_token, log_level):
-        """Offloading boiler to another method to clear up `__init__`."""
+    async def _init(self):
         # Setup logging
         logging.getLogger(__name__)
         logging.basicConfig(
             format="%(asctime)s - %(module)s %(levelname)s: %(message)s",
-            level=log_level,
+            level=self.log_level,
         )
 
-        # Get credentials
+        # Initialize ClientSession and get credentials
+        self.websession = ClientSession()
         logging.info("Retrieving credentials from API with supplied authentication")
-        self.token: str = await self.__authentication(ident, access_token)
+        self.token: str = await self.__authentication(self.ident, self.access_token)
 
     async def __authentication(self, ident: str, access_token: str) -> str:
         """Private method to retrieve credentials from the API, using the authentication method."""
         u = Util()
-        match self.__legacy_oauth:
-            case False:  # Use OAuth 2.0 (Recommended)
-                url = await u.create_url("/oauth2/token")
-                credentials = {
-                    "client_id": ident,
-                    "client_secret": access_token,
-                    "scope": self.scope,
-                }
-                async with self.websession as session:
-                    async with session.post(
-                        url, data=credentials, headers=self.headers
-                    ) as resp:
-                        json = await resp.json()
-                        token = json.get("access_token")
-                        if resp.status != 200:
-                            raise APIError(
-                                f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
-                                str(resp.text),
-                            )
-                        return token
+        credentials = {
+            "client_id": ident,
+            "client_secret": access_token,
+            "scope": self.scope,
+            "grant_type": "client_credentials",
+        }
 
-            case True:  # Use OAuth 1.0
-                url = await u.create_url("/oauth/token")
-                raise NotImplementedError(
-                    "OAuth 1.0 not yet supported! Check back later :)"
+        if self.legacy_oauth == False:  # Use OAuth 2.0 (Recommended)
+            url = await u.create_url("/oauth2/token")
+            resp = await self.websession.post(url, data=credentials)
+            json: dict = await resp.json()
+            if resp.status != 200:
+                print(credentials)
+                raise APIError(
+                    f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
+                    await resp.json(),
                 )
+            token: str = json["access_token"]
+            return token
+
+        elif self.legacy_oauth == True:
+            url = await u.create_url("/oauth/token")
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            credentials["grant_type"] = "password"
+
+            resp = await self.websession.post(url, params=credentials, headers=headers)
+            json: dict = await resp.json()
+            if resp.status != 200:
+                raise APIError(
+                    f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
+                    str(json),
+                )
+            token: str = json["access_token"]
+            return token
+        else:
+            raise Unreachable()
 
     @property
     def lazy_mode(self) -> bool:  # type: ignore
@@ -120,18 +133,6 @@ class AbstractConfig(ABC):
         )
         self.__lazy_mode = new_mode
 
-    @property
-    def headers(self) -> dict:
-        """Headers used by default.
-
-        Should not be changed, only read
-        """
-        logging.info(
-            f"Getter called for headers. Headers are currently: {self.__headers}"
-        )
-
-        return self.__headers
-
     @abstractmethod
     async def refresh(self):
         """Refresh credentials.
@@ -139,6 +140,25 @@ class AbstractConfig(ABC):
         This is usually done automatically on a timer, but can be run on command
         if needed.
         """
+        pass
+
+    @abstractmethod
+    async def stop(self):
+        """Stop all tasks started by this class cleanly."""
+        # await self.websession.close()
+
+    async def __aenter__(self) -> "AbstractConfig":
+        await self._init()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_t: Type[BaseException],
+        exc_v: BaseException,
+        exc_tb: TracebackType,
+    ) -> None:
+        await self.stop()
+        return
 
 
 class HassConfig(AbstractConfig):
@@ -205,37 +225,84 @@ class HassConfig(AbstractConfig):
         self.token = self.token_manager.access_token
 
 
-# FIXME: Use redis instead because of its speed and it actually being a database
-# TODO: Add to project readme that *if* redis features are to be used, the redis server must of course be installed
-class EntityCache:
-    """Create and manage a cache containing a list of entities.
+class BasicConfig(AbstractConfig):
+    """Basic config class, used primarily for testing.
 
-    This will aid the lazy-loading aspect of this library
+    It is highly recommended you create your own config class if you are going
+    to use this in your own project, and tailor it to your own needs.
     """
 
-    def __init__(self, entity_type):
-        """Check if the cache exists and get the entity type."""
-        self.cache_exists = True if exists(".entity_cache/") is True else False
-        self.entity_type = entity_type
-        raise NotImplementedError("Not working on this right now, come back later! :-)")
+    def __init__(
+        self,
+        ident: str,
+        access_token: str,
+        scope: str,
+        log_level: str = "DEBUG",
+        **kwargs,
+    ):
+        super().__init__(ident, access_token, scope, log_level, **kwargs)
 
-    async def create_cache(self):
-        """Create a cache containing entities."""
-        # Tell Entity class about entity type
-        # e = common.Entity()
-        e = NotImplemented
-        e.entity_type = self.entity_type
-        if self.cache_exists is True:
-            logging.warn("Cache already exists! Overwriting")
-        entities = {"entities": await e.get_list(), "date": datetime.datetime.now()}
-        data = msgpack.packb(entities)
-        cache = open(f".entity_cache/{self.entity_type}", "w")
-        cache.write(data)
-        logging.info("Cache has been created!")
-        cache.close()
+    async def _init(self):
+        await super()._init()
+        self._refresh_task = asyncio.create_task(
+            self.refresh(self.ident, self.access_token)
+        )
 
-    async def refresh_cache(self):
-        """Refresh the entity cache."""
-        if self.cache_exists is False:
-            logging.error("Cache does not exist! Skipping")
-            pass
+    async def refresh(self, ident, access_token):
+        """Refresh the token every hour."""
+        try:
+            while True:
+                await asyncio.sleep(3600)
+                await super().__authentication(ident, access_token)
+        except asyncio.CancelledError:
+            logging.info("Request to stop refresh task. Stopping..")
+            return
+
+    async def stop(self):
+        self._refresh_task.cancel()
+        return await super().stop()
+
+    async def __aenter__(self) -> "AbstractConfig":
+        return await super().__aenter__()
+
+    async def __aexit__(
+        self, exc_t: Type[BaseException], exc_v: BaseException, exc_tb: TracebackType
+    ) -> None:
+        await self.stop()
+        return await super().__aexit__(exc_t, exc_v, exc_tb)
+
+
+# FIXME: Use redis instead because of its speed and it actually being a database
+# TODO: Add to project readme that *if* redis features are to be used, the redis server must of course be installed
+# class EntityCache:
+#     """Create and manage a cache containing a list of entities.
+
+#     This will aid the lazy-loading aspect of this library
+#     """
+
+#     def __init__(self, entity_type):
+#         """Check if the cache exists and get the entity type."""
+#         self.cache_exists = True if exists(".entity_cache/") is True else False
+#         self.entity_type = entity_type
+#         raise NotImplementedError("Not working on this right now, come back later! :-)")
+
+#     async def create_cache(self):
+#         """Create a cache containing entities."""
+#         # Tell Entity class about entity type
+#         # e = common.Entity()
+#         e = NotImplemented
+#         e.entity_type = self.entity_type
+#         if self.cache_exists is True:
+#             logging.warn("Cache already exists! Overwriting")
+#         entities = {"entities": await e.get_list(), "date": datetime.datetime.now()}
+#         data = msgpack.packb(entities)
+#         cache = open(f".entity_cache/{self.entity_type}", "w")
+#         cache.write(data)
+#         logging.info("Cache has been created!")
+#         cache.close()
+
+#     async def refresh_cache(self):
+#         """Refresh the entity cache."""
+#         if self.cache_exists is False:
+#             logging.error("Cache does not exist! Skipping")
+#             pass

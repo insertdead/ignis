@@ -106,12 +106,12 @@ class Util:
         url = urljoin(HOST, path)
         return url
 
-    async def entity_url(self, entity_type: Entities, entity_id, current_reading=False):
+    async def entity_url(self, entity_typ: Entities, entity_id, current_reading=False):
         """Create a valid URL for an entity in the API"""
         if current_reading:
             url = await self.create_url(
-                f"/api/{entity_type.name}/{entity_id}/current_reading"
+                f"/api/{entity_typ.value}/{entity_id}/current_reading"
             )
         else:
-            url = await self.create_url(f"/api/{entity_type.name}/{entity_id}")
+            url = await self.create_url(f"/api/{entity_typ.value}/{entity_id}")
         return url
