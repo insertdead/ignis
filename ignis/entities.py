@@ -1,6 +1,5 @@
 """Common code between all entities."""
 import asyncio
-import datetime
 import logging
 from abc import ABC
 from typing import Optional
@@ -91,7 +90,6 @@ async def id_from_name(
     name: str,
 ) -> str:
     """Get entity ID from its name."""
-    # TODO: Once redis database functionality is enabled, add a case statement that goes through the methods of finding the id
     entity_id = entity.get("id")
     if entity_id is None:
         entity_list = await get_list(websession, token, entity_typ)
@@ -126,7 +124,7 @@ async def control(
     headers = DEFAULT_HEADERS.copy()
     headers["Authorization"] = f"Bearer {token}"
 
-    if attributes == None and additional_data == {}:
+    if not attributes and not additional_data == {}:
         raise EntityAttributeError(
             "Missing attributes and additional data! At least one must be set"
         )
@@ -166,7 +164,7 @@ class AbstractEntity(ABC):
         self.entity_id: Optional[str] = kwargs.get("entity_id")
         self.update: bool = False
 
-        if self.name and self.entity_id == None:
+        if not self.name and not self.entity_id:
             raise EntityError("Either `name` or `entity_id` must be set")
 
         self.entity: dict = asyncio.run(self.__setup())
@@ -174,13 +172,12 @@ class AbstractEntity(ABC):
         self.attributes = self.entity["attributes"]
 
         asyncio.create_task(self.__update_entity())
-        # TODO: refactor to get entity info only once
 
     async def __setup(self) -> dict:
         logging.debug(f"Setting up new {self.entity_typ.value}")
         # Get id if it isn't provided, but name is
-        if self.entity_id == None:
-            logging.warn("entity_id does not exist, retrieving it from API")
+        if not self.entity_id:
+            logging.warning("entity_id does not exist, retrieving it from API")
             self.entity_id = await id_from_name(
                 self.config.websession,
                 self.config.token,
@@ -194,13 +191,13 @@ class AbstractEntity(ABC):
             self.config.websession, self.config.token, self.entity_typ, self.entity_id
         )
 
-        if self.name == None:
+        if not self.name:
             logging.info("name does not exist, retriving it from API")
             try:
                 self.name = entity["attributes"]["name"]
             except KeyError:
                 raise EntityAttributeError(
-                    "Entity attribute `name` could not be found. Create an issue at <https://github.com/insertdead/ignis>"
+                    "Entity attribute `name` could not be found. Create an issue: <https://github.com/insertdead/ignis>"
                 )
 
         return entity
@@ -211,7 +208,12 @@ class AbstractEntity(ABC):
         while True:
             await asyncio.sleep(300)
             # Ignore type check due to checks already being made in the code itself
-            self.entity = await get(self.config.websession, self.config.token, self.entity_typ, self.entity_id)  # type: ignore
+            self.entity = await get(
+                self.config.websession,
+                self.config.token,
+                self.entity_typ,
+                self.entity_id,  # type: ignore
+            )
 
 
 class User(AbstractEntity):
@@ -224,10 +226,9 @@ class User(AbstractEntity):
         self, temp: Optional[int]
     ) -> Optional[int]:
         """Temperature entities should default to."""
-        if temp == None:
+        if not temp:
             try:
                 new_temp = int(self.entity["data"]["default-temperature-preference-c"])
-                # TODO: redis cache
             except ValueError:
                 logging.error(
                     "Data received from API could not be parsed into int! Skipping"
@@ -289,7 +290,7 @@ class Structure(AbstractEntity):
 
     async def list_rooms(self) -> list[str]:
         """List the rooms in a structure."""
-        # TODO: implement `get_rel`, which gets the relationship link for an entity
+        await get_rel(self.config.websession, self.config.token, (Entities.STRUCTURE, Entities.ROOM))
         raise NotImplementedError
 
 
@@ -317,8 +318,8 @@ class Room(AbstractEntity):
     async def active(self, toggle: bool) -> bool:
         """Get, or toggle wether a room is active."""
         active = self.attributes["active"]
-        if toggle == True:
-            active = False if active == True else True
+        if toggle is True:
+            active = False if active is True else True
             await control(
                 self.config,
                 self.entity_id,  # type: ignore

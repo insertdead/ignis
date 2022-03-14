@@ -3,21 +3,22 @@ Ignis is a library for interacting with Flair devices (such as vents, pucks, min
 
 ## Usage
 
-A synchronous wrapper is planned, but is not yet implemented, so for the time being the builtin ``asyncio`` library must be used to properly use the coroutines.
+The library must be used in an asynchronous context, otherwise it will raise a `RuntimeError`.
 
 Example:
 ```python
-from ignis.ignis import Config
+from ignis.ignis import BasicConfig
 from ignis.entities import Vent
 from aiohttp import ClientSession
 
 websession = ClientSession()
 
 async def main():
-    c = Config(websession, "IDENT", "TOKEN", lazy_mode = False)
+    async with BasicConfig.create_config(websession, "IDENT", "TOKEN", lazy_mode = False) as config:
+        vent1 = Vent(c, name="patio-cottage")
+        await vent1.toggle()
 
-    vent1 = Vent(c, name="patio-cottage")
-    await vent1.toggle()
+asyncio.run(main)
 ```
 
 ## Planned Features
@@ -31,7 +32,7 @@ $ poetry install
 $ poetry shell
 ```
 
-Due to the nature of APIs and the way the library is tested, you must provide your own API key and identification as environment variables or in ``.envvars.sh`` (which be be loaded on git commit)
+Due to the nature of APIs and the way the library is tested, you must provide your own API key and identification as environment variables or in ``.envrc`` (which is loaded by direnv)
 
 ## Testing
 Ignis uses ``pytest`` for testing, and is run in CI on every commit

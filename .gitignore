@@ -12,4 +12,4 @@ htmlcov
 .mypy-cache/
 dist/
 
-.envvars.sh
+.envrc

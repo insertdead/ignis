@@ -4,14 +4,20 @@ import logging
 import secrets
 import string
 from abc import ABC, abstractmethod
-from tkinter import W
 from types import TracebackType
 from typing import Optional, Type
+from typing_extensions import Self
 
-import msgpack
 from aiohttp.client import ClientSession
 
-from .utils import DEFAULT_HEADERS, SCOPE, APIError, Unreachable, Util
+from .utils import (
+    DEFAULT_HEADERS,
+    SCOPE,
+    APIError,
+    Unreachable,
+    Util,
+    ColourFormatter,
+)
 
 
 async def gen_oauth_state() -> str:
@@ -21,10 +27,6 @@ async def gen_oauth_state() -> str:
     return state
 
 
-# NOTE: I assume it is not too inefficient to just initiate a new ClientSession
-#   for every operation, and it would solve many issues related to the event
-#   loop. If it does indeed pose a performance issue, I will patch together a
-#   hack to fix this
 class AbstractConfig(ABC):
     """Setup class for Ignis.
 
@@ -47,7 +49,6 @@ class AbstractConfig(ABC):
         ident: str,
         access_token: str,
         scope: str,
-        log_level: str = "DEBUG",
         **kwargs,
     ):
         """Set some parameters and set up the instance."""
@@ -55,23 +56,44 @@ class AbstractConfig(ABC):
         self.authorization = kwargs.get("authorization", False)
         self.headers = kwargs.get("headers", DEFAULT_HEADERS)
         self.ident = ident
-        self.log_level = log_level
         self.legacy_oauth = kwargs.get("legacy_oauth", False)
         self.scope = scope
         self.__lazy_mode = kwargs.get("lazy_mode", True)
-        asyncio.run(self._init())
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            RuntimeError("AbstractConfig and derivatives must be instantiated in an async function")
+
+    @classmethod
+    async def create_config(
+        cls,
+        ident: str,
+        access_token: str,
+        scope: str,
+        log_level: int | str = logging.WARNING,
+        **kwargs,
+    ) -> Self:
+        config = cls(ident, access_token, scope, **kwargs)
+        await config._init(log_level)
+        return config
 
     @abstractmethod
-    async def _init(self):
+    async def _init(self, log_level: int | str):
         # Setup logging
-        logging.getLogger(__name__)
-        logging.basicConfig(
-            format="%(asctime)s - %(module)s %(levelname)s: %(message)s",
-            level=self.log_level,
-        )
+        # FIXME: yep logging is broken :/
+        logger = logging.getLogger(__name__)
+        logger.setLevel(log_level)
+
+        ch = logging.StreamHandler()
+        ch.setLevel(log_level)
+        ch.setFormatter(ColourFormatter())
+
+        logger.addHandler(ch)
 
         # Initialize ClientSession and get credentials
-        self.websession = ClientSession()
+        loop = asyncio.get_running_loop()
+        self.websession = ClientSession(loop=loop)
         logging.info("Retrieving credentials from API with supplied authentication")
         self.token: str = await self.__authentication(self.ident, self.access_token)
 
@@ -85,20 +107,20 @@ class AbstractConfig(ABC):
             "grant_type": "client_credentials",
         }
 
-        if self.legacy_oauth == False:  # Use OAuth 2.0 (Recommended)
+        if not self.legacy_oauth:  # Use OAuth 2.0 (Recommended)
             url = await u.create_url("/oauth2/token")
             resp = await self.websession.post(url, data=credentials)
             json: dict = await resp.json()
             if resp.status != 200:
                 print(credentials)
                 raise APIError(
-                    f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
+                    f"Error code received from API ({resp.status}). Maybe incorrect secret and/or ID provided?",
                     await resp.json(),
                 )
             token: str = json["access_token"]
             return token
 
-        elif self.legacy_oauth == True:
+        elif self.legacy_oauth:
             url = await u.create_url("/oauth/token")
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             credentials["grant_type"] = "password"
@@ -107,7 +129,7 @@ class AbstractConfig(ABC):
             json: dict = await resp.json()
             if resp.status != 200:
                 raise APIError(
-                    f"Error code received from HTTP response ({resp.status}). Maybe incorrect secret and/or ID provided?",
+                    f"Error code received from API ({resp.status}). Maybe incorrect secret and/or ID provided?",
                     str(json),
                 )
             token: str = json["access_token"]
@@ -143,12 +165,15 @@ class AbstractConfig(ABC):
         pass
 
     @abstractmethod
-    async def stop(self):
-        """Stop all tasks started by this class cleanly."""
-        # await self.websession.close()
+    async def close(self):
+        """Cleanly end all tasks started by this class.
+
+        Handled by `__aexit__` when used with context managers
+        """
+        logging.info("Closing AbstractConfig...")
+        await self.websession.close()
 
     async def __aenter__(self) -> "AbstractConfig":
-        await self._init()
         return self
 
     async def __aexit__(
@@ -157,10 +182,11 @@ class AbstractConfig(ABC):
         exc_v: BaseException,
         exc_tb: TracebackType,
     ) -> None:
-        await self.stop()
+        await self.close()
         return
 
 
+# TODO: out of date
 class HassConfig(AbstractConfig):
     """Prepackaged class to be used by homeassistant and its OAuth facilities.
 
@@ -216,7 +242,7 @@ class HassConfig(AbstractConfig):
         if needed.
         """
         if self.token_manager.is_valid():
-            logging.warn("Token still valid! Skipping.")
+            logging.warning("Token still valid! Skipping.")
             pass
 
         await self.token_manager.refresh_token()
@@ -237,13 +263,12 @@ class BasicConfig(AbstractConfig):
         ident: str,
         access_token: str,
         scope: str,
-        log_level: str = "DEBUG",
         **kwargs,
     ):
-        super().__init__(ident, access_token, scope, log_level, **kwargs)
+        super().__init__(ident, access_token, scope, **kwargs)
 
-    async def _init(self):
-        await super()._init()
+    async def _init(self, log_level: int | str):
+        await super()._init(log_level)
         self._refresh_task = asyncio.create_task(
             self.refresh(self.ident, self.access_token)
         )
@@ -253,14 +278,15 @@ class BasicConfig(AbstractConfig):
         try:
             while True:
                 await asyncio.sleep(3600)
+                logging.info("Refreshing credentials...")
                 await super().__authentication(ident, access_token)
         except asyncio.CancelledError:
             logging.info("Request to stop refresh task. Stopping..")
             return
 
-    async def stop(self):
+    async def close(self):
         self._refresh_task.cancel()
-        return await super().stop()
+        return await super().close()
 
     async def __aenter__(self) -> "AbstractConfig":
         return await super().__aenter__()
@@ -268,41 +294,5 @@ class BasicConfig(AbstractConfig):
     async def __aexit__(
         self, exc_t: Type[BaseException], exc_v: BaseException, exc_tb: TracebackType
     ) -> None:
-        await self.stop()
+        await self.close()
         return await super().__aexit__(exc_t, exc_v, exc_tb)
-
-
-# FIXME: Use redis instead because of its speed and it actually being a database
-# TODO: Add to project readme that *if* redis features are to be used, the redis server must of course be installed
-# class EntityCache:
-#     """Create and manage a cache containing a list of entities.
-
-#     This will aid the lazy-loading aspect of this library
-#     """
-
-#     def __init__(self, entity_type):
-#         """Check if the cache exists and get the entity type."""
-#         self.cache_exists = True if exists(".entity_cache/") is True else False
-#         self.entity_type = entity_type
-#         raise NotImplementedError("Not working on this right now, come back later! :-)")
-
-#     async def create_cache(self):
-#         """Create a cache containing entities."""
-#         # Tell Entity class about entity type
-#         # e = common.Entity()
-#         e = NotImplemented
-#         e.entity_type = self.entity_type
-#         if self.cache_exists is True:
-#             logging.warn("Cache already exists! Overwriting")
-#         entities = {"entities": await e.get_list(), "date": datetime.datetime.now()}
-#         data = msgpack.packb(entities)
-#         cache = open(f".entity_cache/{self.entity_type}", "w")
-#         cache.write(data)
-#         logging.info("Cache has been created!")
-#         cache.close()
-
-#     async def refresh_cache(self):
-#         """Refresh the entity cache."""
-#         if self.cache_exists is False:
-#             logging.error("Cache does not exist! Skipping")
-#             pass
