@@ -1,0 +1,44 @@
+# Run tests
+name: CI
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+  # Manually perform CI
+  workflow_dispatch:
+
+jobs:
+  ci:
+    strategy:
+      matrix:
+        python-version: [3.10.2]
+        poetry-version: [1.1.12]
+        os: [ubuntu-18.04, macos-latest, windows-latest]
+
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run image
+        uses: abatilo/actions-poetry@v2.1.4
+        with:
+          poetry-version: ${{ matrix.poetry-version }}
+
+      - name: Install dependencies
+        run: poetry install
+      
+      - name: Run tests
+        env:
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          LEGACY_CLIENT_ID: ${{ secrets.LEGACY_CLIENT_ID }}
+          LEGACY_CLIENT_SECRET: ${{ secrets.LEGACY_CLIENT_SECRET }}
+        run: poetry run pytest

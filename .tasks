@@ -1,0 +1,15 @@
+# vim: set fenc=utf-8 ft=dosini:
+# see: https://github.com/skywind3000/asynctasks.vim/wiki/Task-Config
+
+[file-format]
+command=black $(VIM_FILEPATH) && isort $(VIM_FILEPATH)
+cwd=$(VIM_FILEDIR)
+output=quickfix
+errorformat=%f:%l:%m
+save=1
+
+[project-format]
+command=black . && isort .
+cwd=$(VIM_ROOT)
+output=quickfix
+errorformat=%f:%l:%m

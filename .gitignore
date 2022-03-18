@@ -1,6 +1,8 @@
 .DS_Store
 .idea
+.vscode/
 *.log
+tags
 tmp/
 
 *.py[cod]
@@ -9,3 +11,5 @@ build
 htmlcov
 .mypy-cache/
 dist/
+
+.envrc
