@@ -1,10 +1,12 @@
 """Error classes and utilities for Ignis"""
+from dataclasses import dataclass
 from enum import Enum, unique
 from urllib.parse import urljoin
 import logging
+from typing import Optional
+from aiohttp import ClientSession
 
 HOST = "https://api.flair.co"
-SCOPE = "thermostats.view+structures.view+structures.edit"
 DEFAULT_HEADERS = {
     "Accept": "application/vnd.api+json",
     "Content-Type": "application/json",
@@ -25,6 +27,36 @@ class Entities(Enum):
     VENT = "vents"
     MINISPLIT = "hvac-units"
     THERMOSTAT = "thermostats"
+
+
+@dataclass
+class Scope:
+    view: Optional[list[Entities]]
+    edit: list[Entities]
+
+    def __post_init__(self):
+        """Check for duplicates between edit and view and delete the duplicate in view."""
+        index = 0
+        if self.view is None:
+            self.view = []
+
+        for v in self.view:
+            if v in self.edit:
+                del self.view[index]
+            index += 1
+
+    def to_str(self) -> str:
+        """Compile Scope into a string usable by the API"""
+        scope = ""
+
+        for v in self.view:  # type: ignore
+            scope += f"{v.value}.view+"
+
+        for e in self.edit:
+            scope += f"{e.value}.view+{e.value}.edit+"
+        scope = scope[:-1]
+
+        return scope
 
 
 # Exceptions
@@ -70,8 +102,8 @@ class APIError(Exception):
 
     def __init__(self, code: str, *args: str):
         self.code = code
-        self.error = args[1] if args[1] else None
-        self.message = args[2] if args[2] else None
+        self.error = args[0] if len(args) >= 1 else None
+        self.message = args[1] if len(args) >= 2 else None
 
     def __str__(self) -> str:
         if self.message and self.error:
@@ -100,24 +132,140 @@ class Unreachable(Exception):
             return "Unreachable: This should not be possible"
 
 
-# Utlilities packaged into one class
-class Util:
-    """Common utilities packaged into one class for convenience."""
+# Utlilities functions
+async def create_url(path: str):
+    """Create a valid URL for the API"""
+    url = urljoin(HOST, path)
+    return url
 
-    async def create_url(self, path: str):
-        """Create a valid URL for the API"""
-        url = urljoin(HOST, path)
-        return url
 
-    async def entity_url(self, entity_typ: Entities, entity_id, current_reading=False):
-        """Create a valid URL for an entity in the API"""
-        if current_reading:
-            url = await self.create_url(
-                f"/api/{entity_typ.value}/{entity_id}/current_reading"
-            )
-        else:
-            url = await self.create_url(f"/api/{entity_typ.value}/{entity_id}")
-        return url
+async def entity_url(typ: Entities, entity_id, current_reading=False):
+    """Create a valid URL for an entity in the API"""
+    if current_reading:
+        url = await create_url(
+            f"/api/{typ.value}/{entity_id}/current_reading"
+        )
+    else:
+        url = await create_url(f"/api/{typ.value}/{entity_id}")
+    return url
+
+
+async def get(
+    websession: ClientSession, token: str, typ: Entities, id: str
+) -> dict:
+    """Retrieve an entity from the API.
+
+    This should normally be never used anywhere outside the library, but may be
+    used when creating a new entity if needed.
+    """
+    url: str = await entity_url(typ, id)
+    headers = DEFAULT_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
+
+    logging.info(
+        f'`get()` function called for entity "{id}" of type {typ.value}.'
+    )
+
+    resp = await websession.get(url, headers=headers)
+    if resp.status != 200:
+        raise APIError(f"Error code {resp.status} returned from API", await resp.json())
+    json = await resp.json()
+
+    if json:
+        return json
+    else:
+        raise Unreachable()
+
+
+async def get_list(websession: ClientSession, token: str, typ: Entities) -> dict:
+    """Get a list of entities of a certain type."""
+    url: str = await create_url(f"/api/{typ.value}")
+    headers = DEFAULT_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
+
+    resp = await websession.get(url, headers=headers)
+    json = await resp.json()
+    if resp.status != 200:
+        raise APIError(
+            f"Error code {resp.status} returned from API. Check the provided token!",
+            json,
+        )
+
+    if json:
+        return json
+    else:
+        raise Unreachable()
+
+
+async def get_rel(
+    websession: ClientSession, token: str, rel: tuple[Entities, Entities]
+) -> list[str]:
+    """Get the relationships between one entity type and another type."""
+    raise NotImplementedError
+
+
+async def id_from_name(
+    websession: ClientSession,
+    token: str,
+    entity_typ: Entities,
+    entity: dict,
+    name: str,
+) -> str:
+    """Get entity ID from its name."""
+    entity_id = entity.get("id")
+    if entity_id is None:
+        entity_list = await get_list(websession, token, entity_typ)
+        entity_num = next(
+            (
+                i
+                for i, item in enumerate(entity_list["data"])
+                if item["attributes"]["name"] == name
+            ),
+            None,
+        )
+        entity_id = entity_list[entity_num]["id"]
+
+    logging.info(f"Got id `{entity_id}` from name `{name}`")
+    return entity_id
+
+
+async def control(
+    websession: ClientSession,
+    token: str,
+    entity_id: str,
+    entity_typ: Entities,
+    attributes: Optional[dict],
+    **kwargs,
+):
+    """Control an entity via POST http requests."""
+    url: str = await entity_url(entity_typ, entity_id)
+    additional_data: dict = kwargs.get("additional_data", {})
+
+    headers = DEFAULT_HEADERS.copy()
+    headers["Authorization"] = f"Bearer {token}"
+
+    if not attributes and not additional_data == {}:
+        raise EntityAttributeError(
+            "Missing attributes and additional data! At least one must be set"
+        )
+
+    body = {}
+    body["data"] = additional_data
+    body["data"]["type"] = entity_typ.value
+    body["data"]["attributes"] = attributes
+
+    resp = await websession.patch(url, data=body, headers=headers)
+    json = await resp.json()
+    if resp.status != 200:
+        raise APIError(
+            f"Error code {resp.status} returned from API. Check the provided token!",
+            await json,
+        )
+
+    if json:
+        return json
+    else:
+        raise Unreachable()
 
 
 class ColourFormatter(logging.Formatter):

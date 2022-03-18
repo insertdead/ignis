@@ -10,13 +10,34 @@ from typing_extensions import Self
 
 from aiohttp.client import ClientSession
 
+# from ignis.entities import AbstractEntity
+
+from . import utils
 from .utils import (
     DEFAULT_HEADERS,
-    SCOPE,
     APIError,
+    Entities,
+    Scope,
     Unreachable,
-    Util,
     ColourFormatter,
+)
+
+SCOPE = Scope(
+    # Which entity types are read-only by default, due to not much need for these entities being read-writable
+    [
+        # Not sure. this doesn't work
+        # Entities.MINISPLIT,
+        Entities.PUCK,
+        Entities.THERMOSTAT,
+        Entities.USER,
+    ],
+    # Entities that will often be written to
+    [
+        # No need to add this, as the permissions are already covered by structure perms
+        # Entities.ROOM,
+        Entities.STRUCTURE,
+        Entities.VENT,
+    ],
 )
 
 
@@ -27,7 +48,7 @@ async def gen_oauth_state() -> str:
     return state
 
 
-class AbstractConfig(ABC):
+class AbstractClient(ABC):
     """Setup class for Ignis.
 
     In most cases, this class by itself should be usable, but should one want to
@@ -48,7 +69,7 @@ class AbstractConfig(ABC):
         self,
         ident: str,
         access_token: str,
-        scope: str,
+        scope: str | Scope,
         **kwargs,
     ):
         """Set some parameters and set up the instance."""
@@ -70,7 +91,7 @@ class AbstractConfig(ABC):
         cls,
         ident: str,
         access_token: str,
-        scope: str,
+        scope: str | Scope,
         log_level: int | str = logging.WARNING,
         **kwargs,
     ) -> Self:
@@ -91,6 +112,10 @@ class AbstractConfig(ABC):
 
         logger.addHandler(ch)
 
+        # convert scope to string
+        if type(self.scope) == Scope:
+            self.scope = self.scope.to_str()  # type: ignore
+
         # Initialize ClientSession and get credentials
         loop = asyncio.get_running_loop()
         self.websession = ClientSession(loop=loop)
@@ -99,7 +124,6 @@ class AbstractConfig(ABC):
 
     async def __authentication(self, ident: str, access_token: str) -> str:
         """Private method to retrieve credentials from the API, using the authentication method."""
-        u = Util()
         credentials = {
             "client_id": ident,
             "client_secret": access_token,
@@ -107,8 +131,9 @@ class AbstractConfig(ABC):
             "grant_type": "client_credentials",
         }
 
+        print(self.scope)
         if not self.legacy_oauth:  # Use OAuth 2.0 (Recommended)
-            url = await u.create_url("/oauth2/token")
+            url = await utils.create_url("/oauth2/token")
             resp = await self.websession.post(url, data=credentials)
             json: dict = await resp.json()
             if resp.status != 200:
@@ -121,7 +146,7 @@ class AbstractConfig(ABC):
             return token
 
         elif self.legacy_oauth:
-            url = await u.create_url("/oauth/token")
+            url = await utils.create_url("/oauth/token")
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             credentials["grant_type"] = "password"
 
@@ -137,23 +162,9 @@ class AbstractConfig(ABC):
         else:
             raise Unreachable()
 
-    @property
-    def lazy_mode(self) -> bool:  # type: ignore
-        """Whether or not to lazily evaluate.
-
-        Default is `True` as lazy evaluation will generally provide a better user experience
-        """
-        logging.info(
-            f"Getter called for lazy_mode. Lazy evaluation is currently: {self.__lazy_mode}"
-        )
-        return self.__lazy_mode
-
-    @lazy_mode.setter
-    def lazy_mode(self, new_mode):  # type: ignore
-        logging.info(
-            f"Setter called for lazy_mode. Lazy evaluation is currently: {self.__lazy_mode}"
-        )
-        self.__lazy_mode = new_mode
+    async def set_scope(self, scope: str | Scope):
+        self.scope = scope.to_str() if type(scope) is Scope else scope
+        await self.refresh()
 
     @abstractmethod
     async def refresh(self):
@@ -173,7 +184,7 @@ class AbstractConfig(ABC):
         logging.info("Closing AbstractConfig...")
         await self.websession.close()
 
-    async def __aenter__(self) -> "AbstractConfig":
+    async def __aenter__(self) -> "AbstractClient":
         return self
 
     async def __aexit__(
@@ -187,7 +198,7 @@ class AbstractConfig(ABC):
 
 
 # TODO: out of date
-class HassConfig(AbstractConfig):
+class HassClient(AbstractClient):
     """Prepackaged class to be used by homeassistant and its OAuth facilities.
 
     Only really meant to be an example of sorts, however it's used in my
@@ -205,8 +216,8 @@ class HassConfig(AbstractConfig):
         self.lazy_mode: bool = kwargs.get("lazy_mode", True)
         self.websession: ClientSession = websession
         self.token_manager = token_manager
-        scope: Optional[str] = kwargs.get("scope")
-        self.scope: str = f"{SCOPE}+{scope}"
+        scope: Optional[str | Scope] = kwargs.get("scope")
+        self.scope: str = f"{SCOPE.to_str()}+{scope}"
         self.__legacy_oauth: bool = kwargs.get("legacy_oauth", False)
         self.authorization: bool = (
             False if self.__legacy_oauth is True else kwargs.get("authorization", False)
@@ -251,7 +262,7 @@ class HassConfig(AbstractConfig):
         self.token = self.token_manager.access_token
 
 
-class BasicConfig(AbstractConfig):
+class BasicConfig(AbstractClient):
     """Basic config class, used primarily for testing.
 
     It is highly recommended you create your own config class if you are going
@@ -262,7 +273,7 @@ class BasicConfig(AbstractConfig):
         self,
         ident: str,
         access_token: str,
-        scope: str,
+        scope: str | Scope,
         **kwargs,
     ):
         super().__init__(ident, access_token, scope, **kwargs)
@@ -288,7 +299,7 @@ class BasicConfig(AbstractConfig):
         self._refresh_task.cancel()
         return await super().close()
 
-    async def __aenter__(self) -> "AbstractConfig":
+    async def __aenter__(self) -> "AbstractClient":
         return await super().__aenter__()
 
     async def __aexit__(

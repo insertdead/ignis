@@ -4,9 +4,9 @@ import logging
 from abc import ABC
 from typing import Optional
 
-from aiohttp import ClientSession
-
-from ignis.ignis import AbstractConfig
+from .ignis import AbstractClient
+from . import utils
+from enum import Enum, unique
 
 from .utils import (
     APIError,
@@ -14,7 +14,6 @@ from .utils import (
     EntityAttributeError,
     EntityError,
     Unreachable,
-    Util,
 )
 
 HOST = "https://api.flair.co"
@@ -24,130 +23,6 @@ DEFAULT_HEADERS = {
 }
 
 
-async def get(
-    websession: ClientSession, token: str, entity_typ: Entities, entity_id: str
-) -> dict:
-    """Retrieve an entity from the API.
-
-    This should normally be never used anywhere outside the library, but may be
-    used when creating a new entity if needed.
-    """
-    u = Util()
-
-    url: str = await u.entity_url(entity_typ, entity_id)
-    headers = DEFAULT_HEADERS.copy()
-    headers["Authorization"] = f"Bearer {token}"
-
-    logging.info(
-        f'`get()` function called for entity "{entity_id}" of type {entity_typ.value}.'
-    )
-
-    resp = await websession.get(url, headers=headers)
-    if resp.status != 200:
-        raise APIError(f"Error code {resp.status} returned from API", await resp.json())
-    json = await resp.json()
-
-    if json:
-        return json
-    else:
-        raise Unreachable()
-
-
-async def get_list(websession: ClientSession, token: str, entity_typ: Entities) -> dict:
-    """Get a list of entities of a certain type."""
-    u = Util()
-
-    url: str = await u.create_url(f"/api/{entity_typ.value}")
-    headers = DEFAULT_HEADERS.copy()
-    headers["Authorization"] = f"Bearer {token}"
-
-    resp = await websession.get(url, headers=headers)
-    json = await resp.json()
-    if resp.status != 200:
-        raise APIError(
-            f"Error code {resp.status} returned from API. Check the provided token!",
-            json,
-        )
-
-    if json:
-        return json
-    else:
-        raise Unreachable()
-
-
-async def get_rel(
-    websession: ClientSession, token: str, rel: tuple[Entities, Entities]
-) -> list[str]:
-    """Get the relationships between one entity type and another type."""
-    raise NotImplementedError
-
-
-async def id_from_name(
-    websession: ClientSession,
-    token: str,
-    entity_typ: Entities,
-    entity: dict,
-    name: str,
-) -> str:
-    """Get entity ID from its name."""
-    entity_id = entity.get("id")
-    if entity_id is None:
-        entity_list = await get_list(websession, token, entity_typ)
-        entity_num = next(
-            (
-                i
-                for i, item in enumerate(entity_list["data"])
-                if item["attributes"]["name"] == name
-            ),
-            None,
-        )
-        entity_id = entity_list[entity_num]["id"]
-
-    logging.info(f"Got id `{entity_id}` from name `{name}`")
-    return entity_id
-
-
-async def control(
-    config: AbstractConfig,
-    entity_id: str,
-    entity_typ: Entities,
-    attributes: Optional[dict],
-    **kwargs,
-):
-    """Control an entity via POST http requests."""
-    u = Util()
-    url: str = await u.entity_url(entity_typ, entity_id)
-    additional_data: dict = kwargs.get("additional_data", {})
-    token: str = config.token
-    websession: ClientSession = config.websession
-
-    headers = DEFAULT_HEADERS.copy()
-    headers["Authorization"] = f"Bearer {token}"
-
-    if not attributes and not additional_data == {}:
-        raise EntityAttributeError(
-            "Missing attributes and additional data! At least one must be set"
-        )
-
-    body = {}
-    body["data"] = additional_data
-    body["data"]["type"] = entity_typ.value
-    body["data"]["attributes"] = attributes
-
-    resp = await websession.patch(url, data=body, headers=headers)
-    json = await resp.json()
-    if resp.status != 200:
-        raise APIError(
-            f"Error code {resp.status} returned from API. Check the provided token!",
-            await json,
-        )
-
-    if json:
-        return json
-    else:
-        raise Unreachable()
-
-
 class AbstractEntity(ABC):
     """Superclass of all Entity classes.
 
@@ -155,10 +30,10 @@ class AbstractEntity(ABC):
     """
 
     def __init__(
-        self, config: AbstractConfig, entity_typ: Entities, **kwargs: Optional[str]
+        self, config: AbstractClient, entity_typ: Entities, **kwargs: Optional[str]
     ):
         """Prepare some variables and get boilerplate out of the way."""
-        self.config: AbstractConfig = config
+        self.config: AbstractClient = config
         self.entity_typ: Entities = entity_typ
         self.name: Optional[str] = kwargs.get("name")
         self.entity_id: Optional[str] = kwargs.get("entity_id")
@@ -167,18 +42,18 @@ class AbstractEntity(ABC):
         if not self.name and not self.entity_id:
             raise EntityError("Either `name` or `entity_id` must be set")
 
-        self.entity: dict = asyncio.run(self.__setup())
+        self.entity: dict = asyncio.run(self._init())
         # Create a shorthand for attributes
         self.attributes = self.entity["attributes"]
 
         asyncio.create_task(self.__update_entity())
 
-    async def __setup(self) -> dict:
+    async def _init(self) -> dict:
         logging.debug(f"Setting up new {self.entity_typ.value}")
         # Get id if it isn't provided, but name is
         if not self.entity_id:
             logging.warning("entity_id does not exist, retrieving it from API")
-            self.entity_id = await id_from_name(
+            self.entity_id = await utils.id_from_name(
                 self.config.websession,
                 self.config.token,
                 self.entity_typ,
@@ -187,7 +62,7 @@ class AbstractEntity(ABC):
         else:
             raise Unreachable()
 
-        entity = await get(
+        entity = await utils.get(
             self.config.websession, self.config.token, self.entity_typ, self.entity_id
         )
 
@@ -202,13 +77,15 @@ class AbstractEntity(ABC):
 
         return entity
 
+    # async def get()
+
     async def __update_entity(self):
         """Update entity every 5 minutes in background."""
         # TODO: implement proper error handling to update entity if something goes wrong
         while True:
             await asyncio.sleep(300)
             # Ignore type check due to checks already being made in the code itself
-            self.entity = await get(
+            self.entity = await utils.get(
                 self.config.websession,
                 self.config.token,
                 self.entity_typ,
@@ -219,7 +96,9 @@ class AbstractEntity(ABC):
 class User(AbstractEntity):
     """Entity Class for the users entity type."""
 
-    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+    api_string = "users"
+
+    def __init__(self, config: AbstractClient, **kwargs: Optional[str]):
         super().__init__(config, Entities.USER, **kwargs)
 
     async def default_temperature_preference(
@@ -241,7 +120,7 @@ class User(AbstractEntity):
         logging.info(f"Default temperature set to {temp} degrees Celcius!")
         # type check ignored due to checks that would have already set id as a
         #  valid id
-        await control(
+        await utils.control(
             self.config,
             self.entity_id,  # type: ignore
             self.entity_typ,
@@ -257,7 +136,9 @@ class Structure(AbstractEntity):
     Contains most settings useful for the user. Also contains a list of all available rooms.
     """
 
-    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+    api_string = "structures"
+
+    def __init__(self, config: AbstractClient, **kwargs: Optional[str]):
         super().__init__(config, Entities.STRUCTURE, **kwargs)
 
     async def temperature_scale(self) -> bool:
@@ -268,7 +149,7 @@ class Structure(AbstractEntity):
     async def home(self, is_home: bool) -> bool:
         """Check if the structure owner is home."""
         # Once again, type checks have been done in the code
-        await control(
+        await utils.control(
             self.config,
             self.entity_id,  # type: ignore
             self.entity_typ,
@@ -290,7 +171,7 @@ class Structure(AbstractEntity):
 
     async def list_rooms(self) -> list[str]:
         """List the rooms in a structure."""
-        await get_rel(self.config.websession, self.config.token, (Entities.STRUCTURE, Entities.ROOM))
+        await utils.get_rel(self.config.websession, self.config.token, (Entities.STRUCTURE, Entities.ROOM))
         raise NotImplementedError
 
 
@@ -301,13 +182,13 @@ class Room(AbstractEntity):
     on a room-by-room basis.
     """
 
-    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+    def __init__(self, config: AbstractClient, **kwargs: Optional[str]):
         super().__init__(config, Entities.ROOM, **kwargs)
 
     async def set_point_c(self, temp: Optional[int]) -> int:
         """Set the desired temperature for a room."""
         if temp:
-            await control(
+            await utils.control(
                 self.config,
                 self.entity_id,  # type: ignore
                 self.entity_typ,
@@ -320,7 +201,7 @@ class Room(AbstractEntity):
         active = self.attributes["active"]
         if toggle is True:
             active = False if active is True else True
-            await control(
+            await utils.control(
                 self.config,
                 self.entity_id,  # type: ignore
                 self.entity_typ,
@@ -355,7 +236,9 @@ class Room(AbstractEntity):
 class Vent(AbstractEntity):
     """Entity class for the vents entity type, most likely the most used."""
 
-    def __init__(self, config: AbstractConfig, **kwargs: Optional[str]):
+    api_string = "vents"
+
+    def __init__(self, config: AbstractClient, **kwargs: Optional[str]):
         super().__init__(config, Entities.VENT, **kwargs)
 
     async def toggle(self):
@@ -366,7 +249,7 @@ class Vent(AbstractEntity):
 
     async def open(self) -> int:
         """Open the vent."""
-        await control(
+        await utils.control(
             self.config,
             self.entity_id,  # type: ignore
             self.entity_typ,
@@ -378,7 +261,7 @@ class Vent(AbstractEntity):
 
     async def close(self) -> int:
         """Close the vent."""
-        await control(
+        await utils.control(
             self.config,
             self.entity_id,  # type: ignore
             self.entity_typ,
@@ -401,7 +284,7 @@ class Vent(AbstractEntity):
         This is technically from another endpoint in the endpoint, but I still
         count them as the same entity, for convenience's sake.
         """
-        url = await Util().entity_url(
+        url = await utils.entity_url(
             self.entity_typ, self.entity_id, current_reading=True
         )
         headers = DEFAULT_HEADERS.copy()
@@ -422,3 +305,15 @@ class Vent(AbstractEntity):
                 return current_reading
             else:
                 raise Unreachable
+
+
+@unique
+class EntityClasses(Enum):
+
+    USER = User
+    STRUCTURE = Structure
+    ROOM = Room
+    # PUCK = Puck
+    VENT = Vent
+    # THERMOSTAT = Thermostat
+    # MINISPLIT = Minisplit
