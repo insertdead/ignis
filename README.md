@@ -1,7 +1,7 @@
 # Ignis
 > An asynchronous python library for the Flair API.
 
-[FAQ](#FAQ) ● [TODO](TODO.md) ● [INSTALLATION](#Installation)
+[INSTALLATION](#Installation) ● [FAQ](#FAQ) ● [LICENSE](#License) ● [TODO](TODO.md)
 
 # Installation
 As this library is not yet on PyPI, it must be installed with via git instead.
@@ -24,3 +24,18 @@ $ poetry add git+https://github.com/insertdead/ignis
 * Q: Where can I get API keys?
 
   A: You can email the Flair staff at [partners@flair.co](mailto:partners@flair.co) and ask for intructions.
+
+# License
+Copyright 2022 insertdead
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
