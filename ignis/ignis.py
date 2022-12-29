@@ -56,7 +56,7 @@ async def handle_status(res: ClientResponse) -> None:
         elif status >= 400:
             err = await res.text()
             if status == 400:
-                raise InvalidScopeError()
+                raise InvalidScopeError(err)
             if status == 403:
                 raise InvalidAuthError(f"403 Forbidden:\n {err}")
             if status == 404:
@@ -76,7 +76,7 @@ class ApiCredentials:
 
     @classmethod
     async def with_authentication(cls, websession: ClientSession, client_id: str, client_secret: str, legacy_oauth: bool, host: str) -> "ApiCredentials":
-        url = f"{host}/oauth2/token" if not legacy_oauth else f"{host}/oauth/token"
+        url = urljoin(host, "oauth2/token") if not legacy_oauth else urljoin(host, "oauth/token")
 
         data = {
             "client_id": client_id,
@@ -89,18 +89,21 @@ class ApiCredentials:
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         ) as res:
-            # TODO: handle_status(res: ClientSession) coro
-            # handle_status(res)
+            await handle_status(res)
             json = await res.json()
             
             credentials = ApiCredentials(
-                "Authentication",
-                datetime.now(),
                 json.get("access_token", ""),
-                json.get("expires_in", 0),
+                datetime.now(),
+                int(json.get("expires_in", 0)),
+                "Authentication",
             )
 
         return credentials
+    
+    @classmethod
+    async def with_authorization(cls, oauth_client) -> "ApiCredentials":
+        return NotImplemented
 
     @property
     def is_expired(self) -> bool:
@@ -108,6 +111,57 @@ class ApiCredentials:
             return True
         else:
             return False
+
+
+class AbstractOAuthHandler:
+    """A handler that Ignis can use to authorize with OAuth2.
+    
+    Example usage:
+    ```
+    import asyncio
+
+    class MyOAuthHandler(AbstractOAuthHandler):
+        ...
+
+    handler = MyOAuthHandler(
+        "CLIENT_ID",
+        "https://api.flair.co/oauth2",
+        "https://my-app.com/redirect"
+        "structures.edit+structures.view+vents.view",
+        "I'm preventing CSRF attacks!"
+    )
+    credentials = await handler.authorize()
+
+    refresh_coro = asyncio.create_task(handler.refresh_task())
+    ```
+    """
+
+    def __init__(
+        self,
+        client_id: str,
+        authorization_url: str,
+        redirect_uri: str,
+        scope: str,
+        state: Optional[str]
+    ) -> None:
+        self.client_id = client_id
+        self.authorization_url = authorization_url
+        self.redirect_uri = redirect_uri
+        self.scope = scope
+        self.state = state
+        self.prev_credentials: ApiCredentials
+        
+    async def authorize(self) -> ApiCredentials:
+        """Use the application to get """
+        return NotImplemented
+    
+    async def refresh_task(self) -> None:
+        while True:
+            await asyncio.sleep(self.prev_credentials.expires_in - 5.0)
+            await self.refresh()
+
+    async def refresh(self) -> ApiCredentials:
+        return NotImplemented
 
 
 # TODO: relationship stuff may not be completely functional yet
@@ -207,21 +261,45 @@ class Client:
         credentials: ApiCredentials,
         mapper: dict[str, Type[Resource]] = {},
         host = "https://api.flair.co",
+        refresh_task: Optional[asyncio.Task] = None,
     ):
         self.websession = websession
         self.credentials = credentials
         self.mapper = mapper
         self.host = host
+        self.refresh_task = refresh_task
 
         if not asyncio._get_running_loop():
             raise RuntimeError("Clients can only be created within a running event loop!")
 
     @classmethod
-    async def new(cls, client_id: str, client_secret: str, legacy_oauth: bool, mapper: dict[str, Type[Resource]], host: str = "https://api.flair.co") -> "Client":
-        websession = ClientSession()
-        credentials = await ApiCredentials.with_authentication(websession, client_id, client_secret, legacy_oauth, host)
+    async def new(
+        cls,
+        websession: ClientSession,
+        client_id: str,
+        client_secret: str,
+        auth_typ: "_AuthTypes",
+        mapper: dict[str, Type[Resource]],
+        host: str = "https://api.flair.co",
+        handler: Optional[AbstractOAuthHandler] = None,
+        ) -> "Client":
+        refresh_task = None
 
-        return cls(websession, credentials, mapper, host)
+        if auth_typ == "Authentication":
+            credentials = await ApiCredentials.with_authentication(websession, client_id, client_secret, False, host)
+        elif auth_typ == "Legacy":
+            credentials = await ApiCredentials.with_authentication(websession, client_id, client_secret, True, host)
+        elif auth_typ == "Authorization":
+            if handler == None:
+                raise ValueError("OAuth handler not provided despite authorization workflow being chosen")
+            
+            credentials = await handler.authorize()
+            refresh_task = asyncio.create_task(handler.refresh_task())
+
+        else:
+            raise ValueError("No appropriate auth method provided")
+
+        return cls(websession, credentials, mapper, host, refresh_task)
 
     @property
     def token_header(self) -> dict[str, Any]:
@@ -234,10 +312,10 @@ class Client:
         return urljoin(self.host, path)
 
     def resource_url(self, typ: "_ResourceType", id: Optional[str] = None) -> str:
-        path = f"{typ}/{id}" if id else f"{typ}"
+        path = f"api/{typ}/{id}" if id else f"api/{typ}"
         return self.create_url(path)
 
-    async def _create_resource(self, typ: "_ResourceType", id: str, attrs: dict[str, Any], rels: List[Relationship]) -> Resource:
+    async def _create_resource(self, id: str, typ: "_ResourceType", attrs: dict[str, Any], rels: List[Relationship]) -> Resource:
         resource = self.mapper.get(typ, Resource)
 
         return resource(self, id, typ, attrs, rels)
@@ -258,7 +336,7 @@ class Client:
             attrs = data.get("attributes", {})
             rels = await to_rels(self, data.get("relationships", {}))
 
-            return [Resource(self, id, typ, attrs, rels)]
+            return [await self._create_resource(id, typ, attrs, rels)]
             
         else:
             data = json.get("data", [{}])
@@ -344,7 +422,13 @@ class Client:
         await self.refresh_token()
         url = self.resource_url(typ, id)
 
-        async with self.websession.patch(url, headers=self.token_header, json={"data": {"attributes": attrs}}) as res:
+        body = {"data": {
+            "type": typ,
+            "attributes": attrs,
+            "relationships": {},
+        }}
+
+        async with self.websession.patch(url, headers=self.token_header, json=body) as res:
             resource = await self.handle_res(res, False)
 
         return resource[0]
@@ -354,3 +438,13 @@ class Client:
 
     async def del_rel(self, res: Resource, rel: Relationship) -> None:
         return await rel.delete(res)
+
+    async def close(self) -> None:
+        await self.websession.close()
+
+    # NOTE: Perhaps only use persistent clientsessions in context manager?
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
